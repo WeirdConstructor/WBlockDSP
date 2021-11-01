@@ -29,7 +29,7 @@ fn main() {
                 ASTBinOp::Add,
                 Box::new(ASTNode::If(
                     ASTIfOp::IsTrue(Box::new(ASTNode::Var("in2".to_string()))),
-                    Box::new(ASTNode::Lit(66.12)),
+                    Box::new(ASTNode::Call("test".to_string(), Box::new(ASTNode::Lit(11.0)))),
                     Some(Box::new(ASTNode::Lit(99.12))))),
                 Box::new(ASTNode::Var("in1".to_string())))));
 

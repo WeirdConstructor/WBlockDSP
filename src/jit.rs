@@ -2,7 +2,7 @@ use cranelift::prelude::*;
 use cranelift::prelude::types::F64;
 use cranelift::prelude::InstBuilder;
 use cranelift_jit::{JITBuilder, JITModule};
-use cranelift_module::{DataContext, Linkage, Module};
+use cranelift_module::{DataContext, Linkage, Module, FuncId};
 use std::collections::HashMap;
 use std::slice;
 
@@ -65,6 +65,7 @@ pub enum ASTNode {
     Assign(String, Box<ASTNode>),
     BinOp(ASTBinOp, Box<ASTNode>, Box<ASTNode>),
     If(ASTIfOp, Box<ASTNode>, Option<Box<ASTNode>>),
+    Call(String, Box<ASTNode>),
     Stmts(Vec<Box<ASTNode>>),
 }
 
@@ -89,7 +90,9 @@ pub struct JIT {
 
 impl Default for JIT {
     fn default() -> Self {
-        let builder = JITBuilder::new(cranelift_module::default_libcall_names());
+        let mut builder = JITBuilder::new(cranelift_module::default_libcall_names());
+
+        builder.symbol("test", test as *const u8);
         let module = JITModule::new(builder);
         Self {
             builder_context: FunctionBuilderContext::new(),
@@ -167,6 +170,7 @@ impl JIT {
                 &mut self.builder_context);
 
         let mut trans = FunctionTranslator::new(builder, &mut self.module);
+        trans.register_functions();
 
         let ret = trans.translate(fun);
         ret
@@ -196,6 +200,11 @@ struct FunctionTranslator<'a> {
     variables:  HashMap<String, Variable>,
     var_index:  usize,
     module:     &'a mut JITModule,
+    func:       Option<FuncId>,
+}
+
+pub fn test(x: f64) -> f64 {
+    x * 10000.0 + 1.0
 }
 
 impl<'a> FunctionTranslator<'a> {
@@ -205,7 +214,21 @@ impl<'a> FunctionTranslator<'a> {
             variables: HashMap::new(),
             builder,
             module,
+            func: None,
         }
+    }
+
+    pub fn register_functions(&mut self) {
+
+        let mut sig = self.module.make_signature();
+        sig.params.push(AbiParam::new(F64));
+        sig.returns.push(AbiParam::new(F64));
+
+        self.func = Some(
+            self.module
+            .declare_function("test",
+                  cranelift_module::Linkage::Import, &sig)
+            .map_err(|e| e.to_string()).unwrap());
     }
 
     /// Declare a single variable declaration.
@@ -266,6 +289,30 @@ impl<'a> FunctionTranslator<'a> {
         Ok(())
     }
 
+    // TODO: https://zmedley.com/calling-rust.html
+
+//// Register the print function.
+//let print_addr = print_lustc_word as *const u8;
+//builder.symbol("print_lustc_word", print_addr);
+
+// => Dann woanders:
+
+//let mut sig = ctx.module.make_signature();
+//sig.params.push(AbiParam::new(ctx.word));
+//sig.returns.push(AbiParam::new(ctx.word));
+//
+//let callee = ctx
+//    .module
+//    .declare_function("print_lustc_word",
+//          cranelift_module::Linkage::Import, &sig)
+//    .map_err(|e| e.to_string())?;
+//
+//let local_callee = ctx
+//    .module
+//    .declare_func_in_func(callee, &mut ctx.builder.func);
+//
+//let call = ctx.builder.ins().call(local_callee, &args);
+//let res = ctx.builder.inst_results(call)[0]
     fn compile(&mut self, ast: &Box<ASTNode>) -> Value {
         let ptr_type = self.module.target_config().pointer_type();
 
@@ -302,6 +349,15 @@ impl<'a> FunctionTranslator<'a> {
                 let value_a = self.compile(a);
                 let value_b = self.compile(b);
                 self.builder.ins().fadd(value_a, value_b)
+            },
+            ASTNode::Call(name, arg) => {
+                let value_arg = self.compile(arg);
+                let local_callee =
+                    self.module
+                    .declare_func_in_func(
+                        self.func.unwrap(), &mut self.builder.func);
+                let call = self.builder.ins().call(local_callee, &[value_arg]);
+                self.builder.inst_results(call)[0]
             },
             ASTNode::If(ifop, then, els) => {
                 let condition_value =
