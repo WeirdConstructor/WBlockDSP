@@ -6,6 +6,7 @@ use cranelift_module::{DataContext, Linkage, Module};
 use std::collections::HashMap;
 use std::slice;
 
+#[derive(Debug, Clone, Copy)]
 pub enum ASTBinOp {
     Add,
     Sub,
@@ -19,6 +20,18 @@ pub enum ASTBinOp {
     Ge,
 }
 
+#[derive(Debug, Clone)]
+pub enum ASTIfOp {
+    IsTrue(Box<ASTNode>),
+    Eq(Box<ASTNode>, Box<ASTNode>),
+    Ne(Box<ASTNode>, Box<ASTNode>),
+    Lt(Box<ASTNode>, Box<ASTNode>),
+    Le(Box<ASTNode>, Box<ASTNode>),
+    Gt(Box<ASTNode>, Box<ASTNode>),
+    Ge(Box<ASTNode>, Box<ASTNode>),
+}
+
+#[derive(Debug, Clone)]
 pub struct ASTFun {
     params: Vec<String>,
     locals: Vec<String>,
@@ -31,26 +44,27 @@ impl ASTFun {
             params: vec![
                 "in1".to_string(),
                 "in2".to_string(),
-                "alpha".to_string(),
-                "beta".to_string(),
-                "delta".to_string(),
-                "gamma".to_string(),
+//                "alpha".to_string(),
+//                "beta".to_string(),
+//                "delta".to_string(),
+//                "gamma".to_string(),
                 "&sig1".to_string(),
                 "&sig2".to_string(),
-                "state".to_string(),
+//                "state".to_string(),
             ],
-            locals: vec!["x".to_string(), "y".to_string()],
+            locals: vec![], // vec!["x".to_string(), "y".to_string()],
             ast,
         }
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum ASTNode {
     Lit(f64),
     Var(String),
     Assign(String, Box<ASTNode>),
     BinOp(ASTBinOp, Box<ASTNode>, Box<ASTNode>),
-    If(Box<ASTNode>, Box<ASTNode>, Option<Box<ASTNode>>),
+    If(ASTIfOp, Box<ASTNode>, Option<Box<ASTNode>>),
     Stmts(Vec<Box<ASTNode>>),
 }
 
@@ -89,8 +103,18 @@ impl Default for JIT {
 impl JIT {
     /// Compile a string in the toy language into machine code.
     pub fn compile(&mut self, prog: ASTFun) -> Result<*const u8, String> {
+        let ptr_type = self.module.target_config().pointer_type();
+
+        for param_name in &prog.params {
+            if param_name.chars().next() == Some('&') {
+                self.ctx.func.signature.params.push(AbiParam::new(ptr_type));
+            } else {
+                self.ctx.func.signature.params.push(AbiParam::new(F64));
+            };
+        }
+
         // Then, translate the AST nodes into Cranelift IR.
-        self.translate(        prog)?;
+        self.translate(prog)?;
 
         let id = self
             .module
@@ -137,10 +161,6 @@ impl JIT {
         &mut self,
         fun: ASTFun,
     ) -> Result<(), String> {
-        for _p in &fun.params {
-            self.ctx.func.signature.params.push(AbiParam::new(F64));
-        }
-
         let mut builder =
             FunctionBuilder::new(
                 &mut self.ctx.func,
@@ -148,7 +168,8 @@ impl JIT {
 
         let mut trans = FunctionTranslator::new(builder, &mut self.module);
 
-        trans.translate(fun)
+        let ret = trans.translate(fun);
+        ret
 
         // Now translate the statements of the function body.
 //        let mut trans = FunctionTranslator {
@@ -194,6 +215,7 @@ impl<'a> FunctionTranslator<'a> {
         name:      &str,
     ) -> Variable {
         let var = Variable::new(self.var_index);
+        println!("DECLARE {} = {}", name, self.var_index);
 
         if !self.variables.contains_key(name) {
             self.variables.insert(name.into(), var);
@@ -233,15 +255,20 @@ impl<'a> FunctionTranslator<'a> {
             self.builder.def_var(var, zero);
         }
 
+
         self.compile(&fun.ast);
 
         self.builder.ins().return_(&[]);
         self.builder.finalize();
 
+        println!("{}", self.builder.func.display());
+
         Ok(())
     }
 
     fn compile(&mut self, ast: &Box<ASTNode>) -> Value {
+        let ptr_type = self.module.target_config().pointer_type();
+
         match ast.as_ref() {
             ASTNode::Lit(v) => {
                 self.builder.ins().f64const(*v)
@@ -270,6 +297,72 @@ impl<'a> FunctionTranslator<'a> {
                 }
 
                 value
+            },
+            ASTNode::BinOp(ASTBinOp::Add, a, b) => {
+                let value_a = self.compile(a);
+                let value_b = self.compile(b);
+                self.builder.ins().fadd(value_a, value_b)
+            },
+            ASTNode::If(ifop, then, els) => {
+                let condition_value =
+                    match ifop {
+                        ASTIfOp::IsTrue(expr) => {
+                            let res = self.compile(expr);
+                            let cmpv = self.builder.ins().f64const(0.5);
+                            self.builder.ins().fcmp(
+                                FloatCC::GreaterThanOrEqual, res, cmpv)
+                        },
+                        _ => {
+                            self.builder.ins().iconst(ptr_type, 1)
+                        },
+                    };
+
+                let then_block = self.builder.create_block();
+                let else_block = self.builder.create_block();
+                let merge_block = self.builder.create_block();
+
+                // If-else constructs in the toy language have a return value.
+                // In traditional SSA form, this would produce a PHI between
+                // the then and else bodies. Cranelift uses block parameters,
+                // so set up a parameter in the merge block, and we'll pass
+                // the return values to it from the branches.
+                self.builder.append_block_param(merge_block, F64);
+
+                // Test the if condition and conditionally branch.
+                self.builder.ins().brz(condition_value, else_block, &[]);
+                // Fall through to then block.
+                self.builder.ins().jump(then_block, &[]);
+
+                self.builder.switch_to_block(then_block);
+                self.builder.seal_block(then_block);
+                let then_return = self.compile(then);
+
+                // Jump to the merge block, passing it the block return value.
+                self.builder.ins().jump(merge_block, &[then_return]);
+
+                self.builder.switch_to_block(else_block);
+                self.builder.seal_block(else_block);
+                let else_return =
+                    if let Some(els) = els {
+                        self.compile(els)
+                    } else {
+                        self.builder.ins().f64const(0.0)
+                    };
+
+                // Jump to the merge block, passing it the block return value.
+                self.builder.ins().jump(merge_block, &[else_return]);
+
+                // Switch to the merge block for subsequent statements.
+                self.builder.switch_to_block(merge_block);
+
+                // We've now seen all the predecessors of the merge block.
+                self.builder.seal_block(merge_block);
+
+                // Read the value of the if-else by reading the merge block
+                // parameter.
+                let phi = self.builder.block_params(merge_block)[0];
+
+                phi
             },
             _ => {
                 self.builder.ins().f64const(42.23)

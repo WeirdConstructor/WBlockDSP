@@ -1,5 +1,5 @@
 [package]
-name = "wlift"
+name = "wblockdsp"
 version = "0.1.0"
 authors = ["Weird Constructor <weirdconstructor@gmail.com>"]
 license = "GPL-3.0-or-later"
@@ -9,7 +9,7 @@ description  = "Specialized WLambda DSP JIT via Cranelift"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-cranelift = "0.77.0"
-cranelift-module = "0.77.0"
-cranelift-jit = "0.77.0"
+cranelift = "0.78.0"
+cranelift-module = "0.78.0"
+cranelift-jit = "0.78.0"
 wlambda = { git = "https://github.com/WeirdConstructor/WLambda.git" }
