@@ -219,7 +219,10 @@ impl<'a> FunctionTranslator<'a> {
     }
 
     pub fn register_functions(&mut self) {
-
+        // TODO: manage these imports and signature stuff properly!
+        //       also need some compiler error handling for this at some
+        //       point!
+        // (see also https://zmedley.com/calling-rust.html)
         let mut sig = self.module.make_signature();
         sig.params.push(AbiParam::new(F64));
         sig.returns.push(AbiParam::new(F64));
@@ -289,30 +292,6 @@ impl<'a> FunctionTranslator<'a> {
         Ok(())
     }
 
-    // TODO: https://zmedley.com/calling-rust.html
-
-//// Register the print function.
-//let print_addr = print_lustc_word as *const u8;
-//builder.symbol("print_lustc_word", print_addr);
-
-// => Dann woanders:
-
-//let mut sig = ctx.module.make_signature();
-//sig.params.push(AbiParam::new(ctx.word));
-//sig.returns.push(AbiParam::new(ctx.word));
-//
-//let callee = ctx
-//    .module
-//    .declare_function("print_lustc_word",
-//          cranelift_module::Linkage::Import, &sig)
-//    .map_err(|e| e.to_string())?;
-//
-//let local_callee = ctx
-//    .module
-//    .declare_func_in_func(callee, &mut ctx.builder.func);
-//
-//let call = ctx.builder.ins().call(local_callee, &args);
-//let res = ctx.builder.inst_results(call)[0]
     fn compile(&mut self, ast: &Box<ASTNode>) -> Value {
         let ptr_type = self.module.target_config().pointer_type();
 
