@@ -28,8 +28,11 @@ fn main() {
             Box::new(ASTNode::BinOp(
                 ASTBinOp::Add,
                 Box::new(ASTNode::If(
-                    ASTIfOp::IsTrue(Box::new(ASTNode::Var("in2".to_string()))),
-                    Box::new(ASTNode::Call("test".to_string(), Box::new(ASTNode::Lit(11.0)))),
+                    ASTIfOp::IsTrue(
+                        Box::new(ASTNode::Var("in2".to_string()))),
+                    Box::new(ASTNode::Call(
+                        "test".to_string(),
+                        Box::new(ASTNode::Lit(11.0)))),
                     Some(Box::new(ASTNode::Lit(99.12))))),
                 Box::new(ASTNode::Var("in1".to_string())))));
 
@@ -43,7 +46,9 @@ fn main() {
 
     unsafe {
         let code_fn =
-            mem::transmute::<_, fn(f64, f64, *mut f64, *mut f64)>(code_ptr);
+            mem::transmute::<
+                _, fn(f64, f64, *mut f64, *mut f64)>
+            (code_ptr);
         code_fn(11.1, 0.1, sig1, sig2);
         println!("AFTER: {} : {}", *sig1, *sig2);
         code_fn(11.1, 0.5, sig1, sig2);
