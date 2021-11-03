@@ -1,0 +1,9 @@
+[package]
+name = "WBlockGUI"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+wlambda   = { path = "../../wlambda" }
+tuix      = { path = "../../tuix" }
+femtovg   = "0.2.5"
