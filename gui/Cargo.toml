@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2018"
 
 [dependencies]
-wlambda   = { path = "../../wlambda" }
+wlambda   = { git = "https://github.com/WeirdConstructor/WLambda.git" }
 wblockdsp = { path = ".." }
-tuix      = { path = "../../tuix" }
+tuix      = { git = "https://github.com/geom3trik/tuix.git" }
 femtovg   = "0.2.5"
