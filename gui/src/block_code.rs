@@ -64,9 +64,9 @@ impl BlockCodeStyle {
             block_bg_hover_clr: hxclr!(0x922f93),
             block_bg_clr:       hxclr!(0x192129),
             border_hover_clr:   hxclr!(0xecf9ce),
-            border_clr:         hxclr!(0xecf9ce),
-            port_select_clr:    hxclr!(0xecf9ce),
-            grid_marker_clr:    hxclr!(0xecf9ce),
+            border_clr:         hxclr!(0x03fdcb),
+            port_select_clr:    hxclr!(0xd73988),
+            grid_marker_clr:    hxclr!(0x1e333d),
         }
     }
 }
