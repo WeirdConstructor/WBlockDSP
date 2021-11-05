@@ -1,5 +1,10 @@
 use wlambda::*;
 mod jit;
+mod block_view;
+mod block_lang;
+
+pub use block_view::*;
+pub use block_lang::*;
 
 use jit::*;
 use core::mem;
