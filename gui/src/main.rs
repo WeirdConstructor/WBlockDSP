@@ -30,6 +30,26 @@ const STYLE: &str = r#"
     }
 "#;
 
+fn spawn_button<F: 'static + Fn(&mut State, BlockPos)>(
+    state: &mut State,
+    parent: Entity,
+    popup: Entity,
+    lbl: &str,
+    cur_pos: Rc<RefCell<BlockPos>>,
+    cb: F)
+{
+    Button::with_label(lbl)
+        .on_release(move |_, state, _| {
+            (cb)(state, *cur_pos.borrow());
+
+            state.insert_event(
+                Event::new(PopupEvent::Close)
+                .target(popup)
+                .origin(Entity::root()));
+        })
+        .build(state, parent, |builder| builder);
+}
+
 pub fn main() {
     let lang = Rc::new(RefCell::new(BlockLanguage::new()));
     let code = Rc::new(RefCell::new(BlockFun::new(lang.clone())));
@@ -104,7 +124,7 @@ pub fn main() {
         lang.borrow_mut().define(BlockType {
             category:       "arithmetics".to_string(),
             name:           fun_name.to_string(),
-            rows:           1,
+            rows:           2,
             inputs:         vec![Some("".to_string()), Some("".to_string())],
             outputs:        vec![Some(">".to_string())],
             area_count:     0,
@@ -128,36 +148,66 @@ pub fn main() {
                 let pop = Popup::new().build(state, window.entity(), |builder| {
                     builder
                         .set_width(Pixels(100.0))
-                        .set_height(Pixels(100.0))
+                        .set_height(Pixels(200.0))
                 });
 
                 let pop_col = Column::new().build(state, pop, |builder| builder);
 
                 let current_pos = Rc::new(RefCell::new(BlockPos::Cell { id: 0, x: 0, y: 0 }));
-                let btn1 =
-                    Button::with_label("?")
-                        .on_release({
-                            let pop     = pop;
-                            let code    = code.clone();
-                            let cur_pos = current_pos.clone();
 
-                            move |_, state, _| {
-                                if let BlockPos::Cell { id, x, y } = *cur_pos.borrow() {
-                                    println!("CLICK {:?}", (id, x, y));
+                spawn_button(state, pop_col, pop, "+", current_pos.clone(), {
+                    let code = code.clone();
+                        move |state, pos| {
+                        if let BlockPos::Cell { id, x, y } = pos {
+                            code.borrow_mut()
+                                .instanciate_at(id, x, y, "+", None);
+                        }
+                    }});
+                spawn_button(state, pop_col, pop, "->", current_pos.clone(), {
+                    let code = code.clone();
+                        move |state, pos| {
+                        if let BlockPos::Cell { id, x, y } = pos {
+                            code.borrow_mut()
+                                .instanciate_at(id, x, y, "->", None);
+                        }
+                    }});
+                spawn_button(state, pop_col, pop, "->x", current_pos.clone(), {
+                    let code = code.clone();
+                        move |state, pos| {
+                        if let BlockPos::Cell { id, x, y } = pos {
+                            code.borrow_mut()
+                                .instanciate_at(id, x, y, "set", Some("x".to_string()));
+                        }
+                    }});
+                spawn_button(state, pop_col, pop, "x->", current_pos.clone(), {
+                    let code = code.clone();
+                        move |state, pos| {
+                        if let BlockPos::Cell { id, x, y } = pos {
+                            println!("GET");
+                            code.borrow_mut()
+                                .instanciate_at(id, x, y, "get", Some("x".to_string()));
+                        }
+                    }});
 
-                                    code.borrow_mut()
-                                        .instanciate_at(
-                                            id, x, y, "number",
-                                            Some("33".to_string()));
-                                }
-
-                                state.insert_event(
-                                    Event::new(PopupEvent::Close)
-                                    .target(pop)
-                                    .origin(Entity::root()));
-                            }
-                        })
-                        .build(state, pop_col, |builder| builder);
+//                    Button::with_label("?")
+//                        .on_release({
+//                            let pop     = pop;
+//                            let code    = code.clone();
+//                            let cur_pos = current_pos.clone();
+//
+//                            move |_, state, _| {
+//                                if let BlockPos::Cell { id, x, y } = *cur_pos.borrow() {
+//                                    println!("CLICK {:?}", (id, x, y));
+//
+//                                }
+//
+//                                state.insert_event(
+//                                    Event::new(PopupEvent::Close)
+//                                    .target(pop)
+//                                    .origin(Entity::root()));
+//                            }
+//                        })
+//                        .build(state, pop_col, |builder| builder);
 
                 pop_col.set_background_color(state, Color::white());
                 pop.set_background_color(state, Color::white());
