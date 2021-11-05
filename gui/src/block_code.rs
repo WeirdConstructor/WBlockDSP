@@ -2,7 +2,8 @@
 // This file is a part of HexoDSP. Released under GPL-3.0-or-later.
 // See README.md and COPYING for details.
 
-use crate::ui::*;
+use crate::painter::*;
+use crate::rect::*;
 use wblockdsp::{BlockView, BlockCodeView};
 
 use tuix::*;
@@ -10,8 +11,6 @@ use femtovg::FontId;
 
 use std::rc::Rc;
 use std::cell::RefCell;
-
-use std::collections::HashMap;
 
 pub struct DummyBlockCode { }
 
@@ -59,7 +58,7 @@ pub struct BlockCodeStyle {
 }
 
 impl BlockCodeStyle {
-    pub new_default() -> Self {
+    pub fn new_default() -> Self {
         Self {
             bg_clr:             hxclr!(0x111920),
             block_bg_hover_clr: hxclr!(0x922f93),

@@ -188,12 +188,12 @@ pub enum BlockDSPError {
 }
 
 #[derive(Debug, Clone)]
-pub struct BlockCode {
+pub struct BlockFun {
     language:   Rc<RefCell<BlockLanguage>>,
     areas:      Vec<BlockArea>,
 }
 
-impl BlockCode {
+impl BlockFun {
     pub fn new(lang: Rc<RefCell<BlockLanguage>>) -> Self {
         Self {
             language: lang,
@@ -260,7 +260,7 @@ impl BlockCode {
     }
 }
 
-impl BlockCodeView for BlockCode {
+impl BlockCodeView for BlockFun {
     fn area_size(&self, id: usize) -> (usize, usize) {
         self.area_size(id)
     }
