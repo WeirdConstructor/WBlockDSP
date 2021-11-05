@@ -98,7 +98,7 @@ pub struct BlockCode {
 
     on_change:      Option<Box<dyn Fn(&mut Self, &mut State, Entity, (usize, usize))>>,
     on_expand:      Option<Box<dyn Fn(&mut Self, &mut State, Entity, usize)>>,
-    on_click:       Option<Box<dyn Fn(&mut Self, &mut State, Entity, (usize, usize, usize), bool)>>,
+    on_click:       Option<Box<dyn Fn(&mut Self, &mut State, Entity, BlockPos)>>,
     on_hover:       Option<Box<dyn Fn(&mut Self, &mut State, Entity, bool, usize)>>,
 }
 
@@ -120,7 +120,7 @@ impl BlockCode {
 
             on_change:      None,
             on_expand:      None,
-            on_click:     None,
+            on_click:       None,
             on_hover:       None,
         }
     }
@@ -145,7 +145,7 @@ impl BlockCode {
 
     pub fn on_click<F>(mut self, on_click: F) -> Self
     where
-        F: 'static + Fn(&mut Self, &mut State, Entity, (usize, usize, usize), bool),
+        F: 'static + Fn(&mut Self, &mut State, Entity, BlockPos),
     {
         self.on_click = Some(Box::new(on_click));
 
@@ -562,6 +562,12 @@ impl Widget for BlockCode {
                     let m_up = self.find_pos_at(x, y);
                     if m_up == self.m_down {
                         println!("CLICK: {:?}", m_up);
+                        if let Some(pos) = m_up {
+                            if let Some(cb) = self.on_click.take() {
+                                (*cb)(self, state, entity, pos);
+                                self.on_click = Some(cb);
+                            }
+                        }
                     } else {
                         println!("DRAG: {:?} => {:?}", self.m_down, m_up);
                     }
