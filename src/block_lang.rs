@@ -464,6 +464,8 @@ impl BlockFun {
         let mut cur_sub = vec![];
         while let Some(area_idx) = area_work_list.pop_front() {
             areas.push(area_idx);
+
+            cur_sub.clear();
             self.areas[area_idx].get_direct_sub_areas(&mut cur_sub);
 
             for sub_idx in &cur_sub {
