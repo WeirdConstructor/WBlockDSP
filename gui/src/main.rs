@@ -326,11 +326,18 @@ pub fn main() {
                                 (*current_pos.borrow_mut()) = pos;
 
                                 if let BlockPos::Block { row, col, .. } = pos {
+                                    let (id, x, y) = pos.pos();
+
                                     if btn == MouseButton::Right {
                                         println!("PORT CLICK {:?}", pos);
-                                        let (id, x, y) = pos.pos();
                                         code.borrow_mut()
                                             .shift_port(id, x, y, row, col == 1);
+                                    } else {
+                                        let chain =
+                                            code.borrow_mut()
+                                                .retrieve_block_chain_at(
+                                                    id, x, y, false);
+                                        println!("BLOCK CHAIN: {:#?}", chain);
                                     }
                                 } else {
                                     println!("CLICK {:?}", pos);
