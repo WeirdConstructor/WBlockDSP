@@ -142,6 +142,8 @@ impl BlockChain {
     }
 
     pub fn clone_load(&mut self, area: &mut BlockArea) {
+        self.load.clear();
+
         for b in &self.blocks {
             if let Some((block, xo, yo)) = area.ref_at_origin(b.0, b.1) {
                 self.load.push((Box::new(block.clone()), xo, yo));
@@ -152,6 +154,8 @@ impl BlockChain {
     }
 
     pub fn remove_load(&mut self, area: &mut BlockArea) {
+        self.load.clear();
+
         for b in &self.blocks {
             if let Some((block, xo, yo)) = area.remove_at(b.0, b.1) {
                 self.load.push((block, xo, yo));
