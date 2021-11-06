@@ -124,6 +124,11 @@ impl BlockArea {
 
     pub fn auto_shrink(&self) -> bool { self.auto_shrink }
 
+    fn ref_at(&self, x: usize, y: usize) -> Option<&Block> {
+        let (xo, yo) = self.origin_map.get(&(x, y))?;
+        self.blocks.get(&(*xo, *yo)).map(|b| b.as_ref())
+    }
+
     fn ref_mut_at(&mut self, x: usize, y: usize) -> Option<&mut Block> {
         let (xo, yo) = self.origin_map.get(&(x, y))?;
         self.blocks.get_mut(&(*xo, *yo)).map(|b| b.as_mut())
@@ -302,22 +307,34 @@ pub enum BlockDSPError {
     UnknownArea(usize),
     UnknownLanguageType(String),
     NoBlockAt(usize, usize, usize),
+    CircularAction(usize, usize),
     MoveOutside(usize, usize, usize),
     NoSpaceAvailable(usize, usize, usize, usize),
 }
 
 #[derive(Debug, Clone)]
 pub struct BlockFun {
-    language:   Rc<RefCell<BlockLanguage>>,
-    areas:      Vec<Box<BlockArea>>,
+    language:       Rc<RefCell<BlockLanguage>>,
+    areas:          Vec<Box<BlockArea>>,
+    size_work_dq:   VecDeque<usize>,
+    area_work_dq:   VecDeque<usize>,
 }
 
 impl BlockFun {
     pub fn new(lang: Rc<RefCell<BlockLanguage>>) -> Self {
         Self {
-            language: lang,
-            areas:    vec![Box::new(BlockArea::new(16, 16))],
+            language:     lang,
+            areas:        vec![Box::new(BlockArea::new(16, 16))],
+            size_work_dq: VecDeque::new(),
+            area_work_dq: VecDeque::new(),
         }
+    }
+
+    pub fn block_ref(
+        &self, id: usize, x: usize, y: usize
+    ) -> Option<&Block> {
+        let area = self.areas.get(id)?;
+        area.ref_at(x, y)
     }
 
     pub fn block_ref_mut(
@@ -338,22 +355,17 @@ impl BlockFun {
     }
 
     pub fn recalculate_area_sizes(&mut self) {
-        // XXX: this algorithm should work correctly,
-        // because we are always walking upwards!
-        // - calculate area tree, note current area size vector
-        // - push the leafs onto a stack
-        // - take area from stack
-        //   - recalculate size, update current area size vector
-        //   - push parent areas onto stack.
-
         let mut parents = vec![0;      self.areas.len()];
         let mut sizes   = vec![(0, 0); self.areas.len()];
 
         // First we dive downwards, to record all the parents
         // and get the sizes of the (leafs).
 
-        let mut parents_work_list : VecDeque<usize> = VecDeque::new();
-        let mut size_work_list    : VecDeque<usize> = VecDeque::new();
+        self.area_work_dq.clear();
+        self.size_work_dq.clear();
+
+        let mut parents_work_list = &mut self.area_work_dq;
+        let mut size_work_list    = &mut self.size_work_dq;
 
         parents_work_list.push_back(0);
 
@@ -368,7 +380,6 @@ impl BlockFun {
             //      sizes already correctly!
             let (w, h) = self.areas[area_idx].resolve_size(|_id| (0, 0));
             sizes[area_idx] = (w, h);
-            println!("AREA ID {} = {},{}", area_idx, w, h);
 
             if cur_sub.len() == 0 {
                 size_work_list.push_front(area_idx);
@@ -398,12 +409,65 @@ impl BlockFun {
             let (w, h) = self.areas[area_idx].resolve_size(|id| sizes[id]);
             sizes[area_idx] = (w, h);
             self.areas[area_idx].set_size(w, h);
-            println!("AREA ID {} == {},{}", area_idx, w, h);
 
             // XXX: area_idx == 0 is the root area, so skip that
             //      when pushing further parents!
             if area_idx > 0 {
                 size_work_list.push_back(parents[area_idx]);
+            }
+        }
+    }
+
+    pub fn area_is_subarea_of(
+        &mut self, area_id: usize, blocks: &[(usize, usize, usize)]
+    ) -> bool
+    {
+        let mut areas = vec![];
+
+        for (a_id, x, y) in blocks {
+            self.all_sub_areas_of(*a_id, *x, *y, &mut areas);
+        }
+
+        for a_id in &areas {
+            if area_id == *a_id {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    pub fn all_sub_areas_of(
+        &mut self, id: usize, x: usize, y: usize, areas: &mut Vec<usize>
+    ) {
+        let contains =
+            if let Some(block) = self.block_ref(id, x, y) {
+                block.contains.clone()
+            } else {
+                return;
+            };
+
+        let mut area_work_list = &mut self.area_work_dq;
+        area_work_list.clear();
+
+        if let Some(area_id) = contains.0 {
+            area_work_list.push_back(area_id);
+        }
+        if let Some(area_id) = contains.1 {
+            area_work_list.push_back(area_id);
+        }
+
+        if area_work_list.len() <= 0 {
+            return;
+        }
+
+        let mut cur_sub = vec![];
+        while let Some(area_idx) = area_work_list.pop_front() {
+            areas.push(area_idx);
+            self.areas[area_idx].get_direct_sub_areas(&mut cur_sub);
+
+            for sub_idx in &cur_sub {
+                area_work_list.push_back(*sub_idx);
             }
         }
     }
@@ -418,16 +482,16 @@ impl BlockFun {
 
         let (mut block, xo, yo) =
             if let Some(area) = self.areas.get_mut(id) {
-                if let Some((block, xo, yo)) = area.ref_mut_at_origin(x, y) {
-                    let mut new_block = Box::new(block.clone());
-                    if let Some(typ) = lang.borrow().types.get(&new_block.typ) {
-                        typ.touch_contains(new_block.as_mut());
-                    }
+                let (block, xo, yo) =
+                    area.ref_mut_at_origin(x, y)
+                        .ok_or(BlockDSPError::NoBlockAt(id, x, y))?;
 
-                    (new_block, xo, yo)
-                } else {
-                    return Err(BlockDSPError::NoBlockAt(id, x, y));
+                let mut new_block = Box::new(block.clone());
+                if let Some(typ) = lang.borrow().types.get(&new_block.typ) {
+                    typ.touch_contains(new_block.as_mut());
                 }
+
+                (new_block, xo, yo)
             } else {
                 return Err(BlockDSPError::UnknownArea(id));
             };
@@ -445,17 +509,17 @@ impl BlockFun {
             }
         }
 
-        if let Some(area2) = self.areas.get_mut(id2) {
-            let rows = block.rows;
+        let area2 =
+            self.areas
+                .get_mut(id2)
+                .ok_or(BlockDSPError::UnknownArea(id2))?;
+        let rows = block.rows;
 
-            if area2.check_space_at(x2, y2, block.rows) {
-                area2.set_block_at(x2, y2, block);
-                Ok(())
-            } else {
-                Err(BlockDSPError::NoSpaceAvailable(id2, x2, y2, rows))
-            }
+        if area2.check_space_at(x2, y2, block.rows) {
+            area2.set_block_at(x2, y2, block);
+            Ok(())
         } else {
-            Err(BlockDSPError::UnknownArea(id2))
+            Err(BlockDSPError::NoSpaceAvailable(id2, x2, y2, rows))
         }
     }
 
@@ -469,13 +533,14 @@ impl BlockFun {
         //       sub areas! For this we need to dive into the current block
         //       and record if the destination is any of the sub areas!
 
+        if self.area_is_subarea_of(id2, &[(id, x, y)]) {
+            return Err(BlockDSPError::CircularAction(id, id2));
+        }
+
         let (block, xo, yo) =
             if let Some(area) = self.areas.get_mut(id) {
-                if let Some((block, xo, yo)) = area.remove_block_at(x, y) {
-                    (block, xo, yo)
-                } else {
-                    return Err(BlockDSPError::NoBlockAt(id, x, y));
-                }
+                area.remove_block_at(x, y)
+                    .ok_or(BlockDSPError::NoBlockAt(id, x, y))?
             } else {
                 return Err(BlockDSPError::UnknownArea(id));
             };
@@ -493,22 +558,21 @@ impl BlockFun {
             }
         }
 
-        if let Some(area2) = self.areas.get_mut(id2) {
-            let rows = block.rows;
+        let area2 =
+            self.areas.get_mut(id2)
+                .ok_or(BlockDSPError::UnknownArea(id2))?;
+        let rows = block.rows;
 
-            if area2.check_space_at(x2, y2, block.rows) {
-                area2.set_block_at(x2, y2, block);
-                return Ok(());
-            } else {
-                res = Err(BlockDSPError::NoSpaceAvailable(id2, x2, y2, rows));
-            }
+        if area2.check_space_at(x2, y2, block.rows) {
+            area2.set_block_at(x2, y2, block);
+            return Ok(());
         } else {
-            return Err(BlockDSPError::UnknownArea(id2));
+            res = Err(BlockDSPError::NoSpaceAvailable(id2, x2, y2, rows));
         }
 
         if let Err(e) = res {
             if let Some(area) = self.areas.get_mut(id) {
-                area.set_block_at(x, y, block);
+                area.set_block_at(xo, yo, block);
             }
             Err(e)
         } else {
@@ -551,11 +615,12 @@ impl BlockFun {
                 return Err(BlockDSPError::UnknownArea(id));
             }
 
-            if let Some(typ) = lang.types.get(typ) {
-                typ.instanciate_block(user_input)
-            } else {
-                return Err(BlockDSPError::UnknownLanguageType(typ.to_string()));
-            }
+            let typ =
+                lang.types.get(typ)
+                    .ok_or(
+                        BlockDSPError::UnknownLanguageType(
+                            typ.to_string()))?;
+            typ.instanciate_block(user_input)
         };
 
         self.create_areas_for_block(block.as_mut());
