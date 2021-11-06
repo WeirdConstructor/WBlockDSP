@@ -82,6 +82,36 @@ pub enum BlockPos {
     Cell  { id: usize, x: usize, y: usize },
 }
 
+impl BlockPos {
+    pub fn area_id(&self) -> usize {
+        match self {
+            BlockPos::Block { id, .. } => *id,
+            BlockPos::Cell  { id, .. } => *id,
+        }
+    }
+
+    pub fn x(&self) -> usize {
+        match self {
+            BlockPos::Block { x, .. } => *x,
+            BlockPos::Cell  { x, .. } => *x,
+        }
+    }
+
+    pub fn y(&self) -> usize {
+        match self {
+            BlockPos::Block { y, .. } => *y,
+            BlockPos::Cell  { y, .. } => *y,
+        }
+    }
+
+    pub fn pos(&self) -> (usize, usize, usize) {
+        match self {
+            BlockPos::Block { id, x, y, .. } => (*id, *x, *y),
+            BlockPos::Cell  { id, x, y, .. } => (*id, *x, *y),
+        }
+    }
+}
+
 pub struct BlockCode {
     font_size:      f32,
     font:           Option<FontId>,
@@ -98,7 +128,8 @@ pub struct BlockCode {
 
     on_change:      Option<Box<dyn Fn(&mut Self, &mut State, Entity, (usize, usize))>>,
     on_expand:      Option<Box<dyn Fn(&mut Self, &mut State, Entity, usize)>>,
-    on_click:       Option<Box<dyn Fn(&mut Self, &mut State, Entity, BlockPos)>>,
+    on_click:       Option<Box<dyn Fn(&mut Self, &mut State, Entity, BlockPos, MouseButton)>>,
+    on_drag:        Option<Box<dyn Fn(&mut Self, &mut State, Entity, BlockPos, BlockPos, MouseButton)>>,
     on_hover:       Option<Box<dyn Fn(&mut Self, &mut State, Entity, bool, usize)>>,
 }
 
@@ -121,6 +152,7 @@ impl BlockCode {
             on_change:      None,
             on_expand:      None,
             on_click:       None,
+            on_drag:        None,
             on_hover:       None,
         }
     }
@@ -145,9 +177,18 @@ impl BlockCode {
 
     pub fn on_click<F>(mut self, on_click: F) -> Self
     where
-        F: 'static + Fn(&mut Self, &mut State, Entity, BlockPos),
+        F: 'static + Fn(&mut Self, &mut State, Entity, BlockPos, MouseButton),
     {
         self.on_click = Some(Box::new(on_click));
+
+        self
+    }
+
+    pub fn on_drag<F>(mut self, on_drag: F) -> Self
+    where
+        F: 'static + Fn(&mut Self, &mut State, Entity, BlockPos, BlockPos, MouseButton),
+    {
+        self.on_drag = Some(Box::new(on_drag));
 
         self
     }
@@ -169,7 +210,7 @@ impl BlockCode {
 
     pub fn store_area_pos(&mut self, area_id: usize, level: usize, pos: Rect) {
         if level >= self.areas.len() {
-            self.areas.resize_with(area_id + 1, || vec![]);
+            self.areas.resize_with(level + 1, || vec![]);
         }
 
         self.areas[level].push((area_id, pos));
@@ -203,6 +244,8 @@ impl BlockCode {
 
         let mut lbl_buf : [u8; 20] = [0; 20];
 
+        let area_border_px = 4.0;
+
         for row in 0..rows {
             for col in 0..cols {
                 let x = col as f32 * block_w;
@@ -210,7 +253,9 @@ impl BlockCode {
 
                 let mut hover_here =
                     if let Some(hover) = self.hover {
-                        hover.0 == area_id && col == hover.1 && row == hover.2
+                           area_id == hover.0
+                        && col == hover.1
+                        && row == hover.2
                     } else {
                         false
                     };
@@ -248,8 +293,8 @@ impl BlockCode {
                     p.rect_stroke(
                         2.0, border_color,
                         pos.x + x + 1.0,
-                        pos.y + y + 1.0,
-                        w - 2.0, h - 2.0);
+                        pos.y + y + 2.0,
+                        w - 2.0, h - 4.0);
 
                     let hole_px = (0.6 * block_h).ceil();
 
@@ -259,10 +304,6 @@ impl BlockCode {
                         self.block_size * 0.5,
                         0, self.style.border_clr,
                         pos.x + x, pos.y + y, w, h, val_s);
-
-//                                    let fs =
-//                                        calc_font_size_from_text(
-//                                            p, name_lbl, fs, maxwidth);
 
                     for i in 0..block.rows() {
                         if block.has_input(i) {
@@ -276,7 +317,8 @@ impl BlockCode {
                                 hole_px);
 
                             let len = block.input_label(i, &mut lbl_buf[..]);
-                            let val_s = std::str::from_utf8(&lbl_buf[0..len]).unwrap();
+                            let val_s =
+                                std::str::from_utf8(&lbl_buf[0..len]).unwrap();
                             p.label(
                                 self.block_size * 0.4,
                                 -1,
@@ -318,7 +360,7 @@ impl BlockCode {
                             let len = block.output_label(i, &mut lbl_buf[..]);
                             let val_s = std::str::from_utf8(&lbl_buf[0..len]).unwrap();
                             p.label(
-                                self.block_size * 0.3,
+                                self.block_size * 0.4,
                                 1,
                                 self.style.border_clr,
                                 (pos.x + x + (block_w * 0.5)).floor(),
@@ -350,8 +392,8 @@ impl BlockCode {
                         let (area_w, area_h) =
                             self.code.borrow().area_size(cont_id);
                         let bpos = Rect {
-                            x: pos.x + x, // + border
-                            y: pos.y + y + h,
+                            x: pos.x + x + area_border_px, // + border
+                            y: pos.y + y + h - 1.0, // -1.0 for the border offs
                             w: (area_w as f32 * block_w + block_w * 0.3).floor(),
                             h: (area_h as f32 * block_h + block_w * 0.3).floor(),
                         };
@@ -363,7 +405,7 @@ impl BlockCode {
                                 self.code.borrow().area_size(cont_id);
                             let bpos = Rect {
                                 x: bpos.x,
-                                y: bpos.y + bpos.h,
+                                y: bpos.y + 2.0 * area_border_px + bpos.h - 1.0, // -1.0 for the border offs
                                 w: (area_w as f32 * block_w + block_w * 0.3).floor(),
                                 h: (area_h as f32 * block_h + block_w * 0.3).floor(),
                             };
@@ -379,6 +421,16 @@ impl BlockCode {
                         pos.y + y + 1.0,
                         block_w - 2.0, block_h - 2.0);
                 }
+
+                if let Some(down) = self.m_down {
+                    if (area_id, col, row) == down.pos() {
+                        p.rect_stroke(
+                            2.0, self.style.port_select_clr,
+                            pos.x + x + 1.0,
+                            pos.y + y + 1.0,
+                            block_w - 2.0, block_h - 2.0);
+                    }
+                }
             }
         }
 
@@ -387,27 +439,29 @@ impl BlockCode {
 
             let (area_w, area_h) = self.code.borrow().area_size(cont_id);
             let apos = Rect {
-                x: pos.x + 4.0, // + border
-                y: pos.y + 4.0,
+                x: pos.x + area_border_px,
+                y: pos.y + area_border_px,
                 w: pos.w,
                 h: pos.h,
             };
             p.rect_fill(
                 border_color,
-                apos.x - 4.0, apos.y - 4.0, apos.w + 8.0, apos.h + 8.0);
+                apos.x - area_border_px, apos.y - area_border_px, apos.w + 8.0, apos.h + 8.0);
+            let h_area_border_px = (area_border_px * 0.5).floor();
             p.rect_fill(
                 self.style.bg_clr,
-                apos.x - 2.0, apos.y - 2.0, apos.w + 4.0, apos.h + 4.0);
+                apos.x - h_area_border_px, apos.y - h_area_border_px,
+                apos.w + area_border_px, apos.h + area_border_px);
             p.rect_fill(
                 bg_color,
                 (pos.x + block_w * 0.25).floor(),
-                pos.y - 2.0,
+                pos.y - h_area_border_px,
                 (block_w * 0.5).floor(),
                 8.0);
 
             self.store_area_pos(cont_id, level + 1, Rect {
-                x: apos.x - 4.0,
-                y: apos.y - 4.0,
+                x: apos.x - area_border_px,
+                y: apos.y - area_border_px,
                 w: apos.w + 8.0,
                 h: apos.h + 8.0,
             });
@@ -531,7 +585,7 @@ impl Widget for BlockCode {
 
         if let Some(window_event) = event.message.downcast::<WindowEvent>() {
             match window_event {
-                WindowEvent::MouseDown(MouseButton::Left) => {
+                WindowEvent::MouseDown(_) => {
                     let (x, y) = (state.mouse.cursorx, state.mouse.cursory);
                     self.m_down = self.find_pos_at(x, y);
 
@@ -556,7 +610,7 @@ impl Widget for BlockCode {
                         Event::new(WindowEvent::Redraw)
                             .target(Entity::root()));
                 },
-                WindowEvent::MouseUp(MouseButton::Left) => {
+                WindowEvent::MouseUp(btn) => {
                     let (x, y) = (state.mouse.cursorx, state.mouse.cursory);
 
                     let m_up = self.find_pos_at(x, y);
@@ -564,12 +618,20 @@ impl Widget for BlockCode {
                         println!("CLICK: {:?}", m_up);
                         if let Some(pos) = m_up {
                             if let Some(cb) = self.on_click.take() {
-                                (*cb)(self, state, entity, pos);
+                                (*cb)(self, state, entity, pos, *btn);
                                 self.on_click = Some(cb);
                             }
                         }
                     } else {
                         println!("DRAG: {:?} => {:?}", self.m_down, m_up);
+                        if let (Some(down_pos), Some(up_pos)) =
+                            (self.m_down, m_up)
+                        {
+                            if let Some(cb) = self.on_drag.take() {
+                                (*cb)(self, state, entity, down_pos, up_pos, *btn);
+                                self.on_drag = Some(cb);
+                            }
+                        }
                     }
 
                     self.m_down = None;

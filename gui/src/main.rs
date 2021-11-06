@@ -59,7 +59,7 @@ pub fn main() {
         name:           "number".to_string(),
         rows:           1,
         inputs:         vec![],
-        outputs:        vec![Some(">".to_string())],
+        outputs:        vec![Some("".to_string())],
         area_count:     0,
         user_input:     true,
         description:    "A literal value, typed in by the user.".to_string(),
@@ -70,7 +70,7 @@ pub fn main() {
         name:           "->".to_string(),
         rows:           1,
         inputs:         vec![Some("".to_string())],
-        outputs:        vec![Some(">".to_string())],
+        outputs:        vec![Some("".to_string())],
         area_count:     0,
         user_input:     false,
         description:    "Forwards the value one block".to_string(),
@@ -81,7 +81,7 @@ pub fn main() {
         name:           "->2".to_string(),
         rows:           2,
         inputs:         vec![Some("".to_string())],
-        outputs:        vec![Some(">".to_string()), Some(">".to_string())],
+        outputs:        vec![Some("".to_string()), Some("".to_string())],
         area_count:     0,
         user_input:     false,
         description:    "Forwards the value one block and sends it to multiple destinations".to_string(),
@@ -92,7 +92,7 @@ pub fn main() {
         name:           "->3".to_string(),
         rows:           3,
         inputs:         vec![Some("".to_string())],
-        outputs:        vec![Some(">".to_string()), Some(">".to_string()), Some(">".to_string())],
+        outputs:        vec![Some("".to_string()), Some("".to_string()), Some("".to_string())],
         area_count:     0,
         user_input:     false,
         description:    "Forwards the value one block and sends it to multiple destinations".to_string(),
@@ -102,7 +102,7 @@ pub fn main() {
         category:       "variables".to_string(),
         name:           "set".to_string(),
         rows:           1,
-        inputs:         vec![Some(">".to_string())],
+        inputs:         vec![Some("".to_string())],
         outputs:        vec![],
         area_count:     0,
         user_input:     true,
@@ -114,10 +114,22 @@ pub fn main() {
         name:           "get".to_string(),
         rows:           1,
         inputs:         vec![],
-        outputs:        vec![Some(">".to_string())],
+        outputs:        vec![Some("".to_string())],
         area_count:     0,
         user_input:     true,
         description:    "Loads a variable".to_string(),
+    });
+
+    lang.borrow_mut().define(BlockType {
+        category:       "variables".to_string(),
+        name:           "if".to_string(),
+        rows:           1,
+        inputs:         vec![Some("".to_string())],
+        outputs:        vec![Some("".to_string())],
+        area_count:     2,
+        user_input:     false,
+        description:    "Divides the controlflow based on a true (>= 0.5) \
+                         or false (< 0.5) input value.".to_string(),
     });
 
     for fun_name in &["+", "-", "*", "/"] {
@@ -125,8 +137,13 @@ pub fn main() {
             category:       "arithmetics".to_string(),
             name:           fun_name.to_string(),
             rows:           2,
-            inputs:         vec![Some("".to_string()), Some("".to_string())],
-            outputs:        vec![Some(">".to_string())],
+            inputs:
+                if fun_name == &"-" || fun_name == &"/" {
+                    vec![Some("a".to_string()), Some("b".to_string())]
+                } else {
+                    vec![Some("".to_string()), Some("".to_string())]
+                },
+            outputs:        vec![Some("".to_string())],
             area_count:     0,
             user_input:     false,
             description:    "A binary arithmetics operation".to_string(),
@@ -134,6 +151,8 @@ pub fn main() {
     }
 
     code.borrow_mut().instanciate_at(0, 1, 1, "number", Some("2.32".to_string()));
+    code.borrow_mut().instanciate_at(0, 3, 3, "+", None);
+    code.borrow_mut().instanciate_at(0, 4, 3, "->3", None);
 
     let app =
         Application::new(
@@ -148,7 +167,7 @@ pub fn main() {
                 let pop = Popup::new().build(state, window.entity(), |builder| {
                     builder
                         .set_width(Pixels(100.0))
-                        .set_height(Pixels(200.0))
+                        .set_height(Pixels(400.0))
                 });
 
                 let pop_col = Column::new().build(state, pop, |builder| builder);
@@ -158,36 +177,74 @@ pub fn main() {
                 spawn_button(state, pop_col, pop, "+", current_pos.clone(), {
                     let code = code.clone();
                         move |state, pos| {
-                        if let BlockPos::Cell { id, x, y } = pos {
-                            code.borrow_mut()
-                                .instanciate_at(id, x, y, "+", None);
-                        }
+                        let (id, x, y) = pos.pos();
+                        code.borrow_mut()
+                            .instanciate_at(id, x, y, "+", None);
+                    }});
+                spawn_button(state, pop_col, pop, "-", current_pos.clone(), {
+                    let code = code.clone();
+                        move |state, pos| {
+                        let (id, x, y) = pos.pos();
+                        code.borrow_mut()
+                            .instanciate_at(id, x, y, "-", None);
+                    }});
+                spawn_button(state, pop_col, pop, "*", current_pos.clone(), {
+                    let code = code.clone();
+                        move |state, pos| {
+                        let (id, x, y) = pos.pos();
+                        code.borrow_mut()
+                            .instanciate_at(id, x, y, "*", None);
+                    }});
+                spawn_button(state, pop_col, pop, "/", current_pos.clone(), {
+                    let code = code.clone();
+                        move |state, pos| {
+                        let (id, x, y) = pos.pos();
+                        code.borrow_mut()
+                            .instanciate_at(id, x, y, "/", None);
+                    }});
+                spawn_button(state, pop_col, pop, "if", current_pos.clone(), {
+                    let code = code.clone();
+                        move |state, pos| {
+                        let (id, x, y) = pos.pos();
+                        code.borrow_mut()
+                            .instanciate_at(id, x, y, "if", None);
                     }});
                 spawn_button(state, pop_col, pop, "->", current_pos.clone(), {
                     let code = code.clone();
                         move |state, pos| {
-                        if let BlockPos::Cell { id, x, y } = pos {
-                            code.borrow_mut()
-                                .instanciate_at(id, x, y, "->", None);
-                        }
+                        let (id, x, y) = pos.pos();
+                        code.borrow_mut()
+                            .instanciate_at(id, x, y, "->", None);
                     }});
-                spawn_button(state, pop_col, pop, "->x", current_pos.clone(), {
+                spawn_button(state, pop_col, pop, "->2", current_pos.clone(), {
                     let code = code.clone();
                         move |state, pos| {
-                        if let BlockPos::Cell { id, x, y } = pos {
-                            code.borrow_mut()
-                                .instanciate_at(id, x, y, "set", Some("x".to_string()));
-                        }
+                        let (id, x, y) = pos.pos();
+                        code.borrow_mut()
+                            .instanciate_at(id, x, y, "->2", None);
                     }});
-                spawn_button(state, pop_col, pop, "x->", current_pos.clone(), {
+                spawn_button(state, pop_col, pop, "->3", current_pos.clone(), {
                     let code = code.clone();
                         move |state, pos| {
-                        if let BlockPos::Cell { id, x, y } = pos {
-                            println!("GET");
-                            code.borrow_mut()
-                                .instanciate_at(id, x, y, "get", Some("x".to_string()));
-                        }
+                        let (id, x, y) = pos.pos();
+                        code.borrow_mut()
+                            .instanciate_at(id, x, y, "->3", None);
                     }});
+                spawn_button(state, pop_col, pop, "set: x", current_pos.clone(), {
+                    let code = code.clone();
+                        move |state, pos| {
+                        let (id, x, y) = pos.pos();
+                        code.borrow_mut()
+                            .instanciate_at(id, x, y, "set", Some("x".to_string()));
+                    }});
+                spawn_button(state, pop_col, pop, "get: x", current_pos.clone(), {
+                    let code = code.clone();
+                        move |state, pos| {
+                        let (id, x, y) = pos.pos();
+                        code.borrow_mut()
+                            .instanciate_at(id, x, y, "get", Some("x".to_string()));
+                    }});
+
 
 //                    Button::with_label("?")
 //                        .on_release({
@@ -214,14 +271,43 @@ pub fn main() {
 
                 let bc =
                     BlockCode::new(style)
-                        .on_click(move |_, state, e, pos| {
-                            println!("CLICK {:?}", pos);
-                            (*current_pos.borrow_mut()) = pos;
+                        .on_click({
+                            let code = code.clone();
+                            move |_, state, e, pos, btn| {
+                                (*current_pos.borrow_mut()) = pos;
 
-                            state.insert_event(
-                                Event::new(PopupEvent::OpenAtCursor)
-                                .target(pop)
-                                .origin(Entity::root()));
+                                if let BlockPos::Block { row, col, .. } = pos {
+                                    if btn == MouseButton::Right {
+                                        println!("PORT CLICK {:?}", pos);
+                                        let (id, x, y) = pos.pos();
+                                        code.borrow_mut()
+                                            .shift_port(id, x, y, row, col == 1);
+                                    }
+                                } else {
+                                    println!("CLICK {:?}", pos);
+                                    state.insert_event(
+                                        Event::new(PopupEvent::OpenAtCursor)
+                                        .target(pop)
+                                        .origin(Entity::root()));
+                                }
+                            }
+                        })
+                        .on_drag({
+                            let code = code.clone();
+                            move |_, state, e, pos, pos2, btn| {
+                                let (id, x, y)    = pos.pos();
+                                let (id2, x2, y2) = pos2.pos();
+
+                                if let BlockPos::Cell { .. } = pos {
+                                    if let BlockPos::Block { .. } = pos2 {
+                                        code.borrow_mut()
+                                            .clone_block_from_to(id2, x2, y2, id, x, y);
+                                    }
+                                } else {
+                                    code.borrow_mut()
+                                        .move_block_from_to(id, x, y, id2, x2, y2);
+                                }
+                            }
                         })
                         .build(state, col, |builder| { builder });
 
