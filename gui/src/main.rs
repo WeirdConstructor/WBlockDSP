@@ -180,6 +180,8 @@ pub fn main() {
                         let (id, x, y) = pos.pos();
                         code.borrow_mut()
                             .instanciate_at(id, x, y, "+", None);
+                        code.borrow_mut()
+                            .recalculate_area_sizes();
                     }});
                 spawn_button(state, pop_col, pop, "-", current_pos.clone(), {
                     let code = code.clone();
@@ -187,6 +189,8 @@ pub fn main() {
                         let (id, x, y) = pos.pos();
                         code.borrow_mut()
                             .instanciate_at(id, x, y, "-", None);
+                        code.borrow_mut()
+                            .recalculate_area_sizes();
                     }});
                 spawn_button(state, pop_col, pop, "*", current_pos.clone(), {
                     let code = code.clone();
@@ -194,6 +198,8 @@ pub fn main() {
                         let (id, x, y) = pos.pos();
                         code.borrow_mut()
                             .instanciate_at(id, x, y, "*", None);
+                        code.borrow_mut()
+                            .recalculate_area_sizes();
                     }});
                 spawn_button(state, pop_col, pop, "/", current_pos.clone(), {
                     let code = code.clone();
@@ -201,6 +207,8 @@ pub fn main() {
                         let (id, x, y) = pos.pos();
                         code.borrow_mut()
                             .instanciate_at(id, x, y, "/", None);
+                        code.borrow_mut()
+                            .recalculate_area_sizes();
                     }});
                 spawn_button(state, pop_col, pop, "if", current_pos.clone(), {
                     let code = code.clone();
@@ -208,6 +216,8 @@ pub fn main() {
                         let (id, x, y) = pos.pos();
                         code.borrow_mut()
                             .instanciate_at(id, x, y, "if", None);
+                        code.borrow_mut()
+                            .recalculate_area_sizes();
                     }});
                 spawn_button(state, pop_col, pop, "->", current_pos.clone(), {
                     let code = code.clone();
@@ -215,6 +225,8 @@ pub fn main() {
                         let (id, x, y) = pos.pos();
                         code.borrow_mut()
                             .instanciate_at(id, x, y, "->", None);
+                        code.borrow_mut()
+                            .recalculate_area_sizes();
                     }});
                 spawn_button(state, pop_col, pop, "->2", current_pos.clone(), {
                     let code = code.clone();
@@ -222,6 +234,8 @@ pub fn main() {
                         let (id, x, y) = pos.pos();
                         code.borrow_mut()
                             .instanciate_at(id, x, y, "->2", None);
+                        code.borrow_mut()
+                            .recalculate_area_sizes();
                     }});
                 spawn_button(state, pop_col, pop, "->3", current_pos.clone(), {
                     let code = code.clone();
@@ -229,6 +243,8 @@ pub fn main() {
                         let (id, x, y) = pos.pos();
                         code.borrow_mut()
                             .instanciate_at(id, x, y, "->3", None);
+                        code.borrow_mut()
+                            .recalculate_area_sizes();
                     }});
                 spawn_button(state, pop_col, pop, "set: x", current_pos.clone(), {
                     let code = code.clone();
@@ -236,6 +252,8 @@ pub fn main() {
                         let (id, x, y) = pos.pos();
                         code.borrow_mut()
                             .instanciate_at(id, x, y, "set", Some("x".to_string()));
+                        code.borrow_mut()
+                            .recalculate_area_sizes();
                     }});
                 spawn_button(state, pop_col, pop, "get: x", current_pos.clone(), {
                     let code = code.clone();
@@ -243,6 +261,8 @@ pub fn main() {
                         let (id, x, y) = pos.pos();
                         code.borrow_mut()
                             .instanciate_at(id, x, y, "get", Some("x".to_string()));
+                        code.borrow_mut()
+                            .recalculate_area_sizes();
                     }});
 
 
@@ -302,10 +322,14 @@ pub fn main() {
                                     if let BlockPos::Block { .. } = pos2 {
                                         code.borrow_mut()
                                             .clone_block_from_to(id2, x2, y2, id, x, y);
+                                        code.borrow_mut()
+                                            .recalculate_area_sizes();
                                     }
                                 } else {
                                     code.borrow_mut()
                                         .move_block_from_to(id, x, y, id2, x2, y2);
+                                    code.borrow_mut()
+                                        .recalculate_area_sizes();
                                 }
                             }
                         })

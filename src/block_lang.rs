@@ -3,6 +3,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 use std::collections::HashMap;
+use std::collections::VecDeque;
 
 #[derive(Debug)]
 pub struct Block {
@@ -104,7 +105,6 @@ pub struct BlockArea {
     blocks:      HashMap<(usize, usize), Box<Block>>,
     origin_map:  HashMap<(usize, usize), (usize, usize)>,
     size:        (usize, usize),
-    update_size: bool,
     auto_shrink: bool,
 }
 
@@ -114,7 +114,6 @@ impl BlockArea {
             blocks:      HashMap::new(),
             origin_map:  HashMap::new(),
             size:        (w, h),
-            update_size: false,
             auto_shrink: false,
         }
     }
@@ -122,6 +121,8 @@ impl BlockArea {
     pub fn set_auto_shrink(&mut self, shrink: bool) {
         self.auto_shrink = shrink;
     }
+
+    pub fn auto_shrink(&self) -> bool { self.auto_shrink }
 
     fn ref_mut_at(&mut self, x: usize, y: usize) -> Option<&mut Block> {
         let (xo, yo) = self.origin_map.get(&(x, y))?;
@@ -137,7 +138,6 @@ impl BlockArea {
     fn set_block_at(&mut self, x: usize, y: usize, block: Box<Block>) {
         self.blocks.insert((x, y), block);
         self.update_origin_map();
-        self.update_size();
     }
 
     fn remove_block_at(&mut self, x: usize, y: usize) -> Option<(Box<Block>, usize, usize)> {
@@ -145,7 +145,6 @@ impl BlockArea {
         if let Some(block) = self.blocks.remove(&(*xo, *yo)) {
             let (xo, yo) = (*xo, *yo);
             self.update_origin_map();
-            self.update_size();
             Some((block, xo, yo))
         } else {
             None
@@ -156,11 +155,22 @@ impl BlockArea {
         self.size = (w, h);
     }
 
-    fn update_size(&mut self) {
-        self.update_size = true;
+    fn get_direct_sub_areas(&self, out: &mut Vec<usize>) {
+        for ((x, y), block) in &self.blocks {
+            if let Some(sub_area) = block.contains.0 {
+                out.push(sub_area);
+            }
+
+            if let Some(sub_area) = block.contains.1 {
+                out.push(sub_area);
+            }
+        }
     }
 
-    fn resolve_size<F: Fn(usize) -> (usize, usize)>(&mut self, resolve_sub_areas: F) {
+    fn resolve_size<F: Fn(usize) -> (usize, usize)>(
+        &self, resolve_sub_areas: F
+    ) -> (usize, usize)
+    {
         let mut min_w = 1;
         let mut min_h = 1;
 
@@ -170,19 +180,32 @@ impl BlockArea {
         }
 
         for ((x, y), block) in &self.blocks {
+            let mut prev_h = 1; // one for the top block
+
             if let Some(sub_area) = block.contains.0 {
-                let (sub_w, sub_h) = resolve_sub_areas(sub_area);
+                let (sub_w, mut sub_h) = resolve_sub_areas(sub_area);
+                sub_h += prev_h;
+                prev_h += sub_h;
+                if min_w < (x + sub_w + 1) { min_w = x + sub_w + 1; }
+                if min_h < (y + sub_h + 1) { min_h = y + sub_h + 1; }
+            }
+
+            if let Some(sub_area) = block.contains.1 {
+                let (sub_w, mut sub_h) = resolve_sub_areas(sub_area);
+                sub_h += prev_h;
                 if min_w < (x + sub_w + 1) { min_w = x + sub_w + 1; }
                 if min_h < (y + sub_h + 1) { min_h = y + sub_h + 1; }
             }
         }
 
         if self.auto_shrink {
-            self.size = (min_w, min_h);
+            (min_w, min_h)
 
         } else {
-            if self.size.0 < min_w { self.size.0 = min_w; }
-            if self.size.1 < min_h { self.size.1 = min_h; }
+            (
+                if self.size.0 < min_w { min_w } else { self.size.0 },
+                if self.size.1 < min_h { min_h } else { self.size.1 },
+            )
         }
     }
 
@@ -286,14 +309,14 @@ pub enum BlockDSPError {
 #[derive(Debug, Clone)]
 pub struct BlockFun {
     language:   Rc<RefCell<BlockLanguage>>,
-    areas:      Vec<BlockArea>,
+    areas:      Vec<Box<BlockArea>>,
 }
 
 impl BlockFun {
     pub fn new(lang: Rc<RefCell<BlockLanguage>>) -> Self {
         Self {
             language: lang,
-            areas:    vec![BlockArea::new(16, 16)],
+            areas:    vec![Box::new(BlockArea::new(16, 16))],
         }
     }
 
@@ -311,6 +334,77 @@ impl BlockFun {
     {
         if let Some(block) = self.block_ref_mut(id, x, y) {
             block.shift_port(row, output);
+        }
+    }
+
+    pub fn recalculate_area_sizes(&mut self) {
+        // XXX: this algorithm should work correctly,
+        // because we are always walking upwards!
+        // - calculate area tree, note current area size vector
+        // - push the leafs onto a stack
+        // - take area from stack
+        //   - recalculate size, update current area size vector
+        //   - push parent areas onto stack.
+
+        let mut parents = vec![0;      self.areas.len()];
+        let mut sizes   = vec![(0, 0); self.areas.len()];
+
+        // First we dive downwards, to record all the parents
+        // and get the sizes of the (leafs).
+
+        let mut parents_work_list : VecDeque<usize> = VecDeque::new();
+        let mut size_work_list    : VecDeque<usize> = VecDeque::new();
+
+        parents_work_list.push_back(0);
+
+        let mut cur_sub = vec![];
+        while let Some(area_idx) = parents_work_list.pop_back() {
+            cur_sub.clear();
+
+            self.areas[area_idx].get_direct_sub_areas(&mut cur_sub);
+
+            // XXX: The resolver gets (0, 0), thats wrong for the
+            //      areas with sub areas. But it resolves the leaf area
+            //      sizes already correctly!
+            let (w, h) = self.areas[area_idx].resolve_size(|_id| (0, 0));
+            sizes[area_idx] = (w, h);
+            println!("AREA ID {} = {},{}", area_idx, w, h);
+
+            if cur_sub.len() == 0 {
+                size_work_list.push_front(area_idx);
+
+            } else {
+                for sub_idx in &cur_sub {
+                    // XXX: Record the parent:
+                    parents[*sub_idx] = area_idx;
+                    parents_work_list.push_back(*sub_idx);
+                }
+            }
+        }
+
+        // XXX: Invariant now is:
+        //      - `parents` contains all the parent area IDs.
+        //      - `size_work_list` contains all the leaf area IDs.
+        //      - `sizes`   contains correct sizes for the leafs
+        //                  (but wrong for the non leafs).
+
+        // Next we need to work through the size_work_list upwards.
+        // That means, for each leaf in front of the Deque,
+        // we push the parent to the back.
+        while let Some(area_idx) = size_work_list.pop_front() {
+            // XXX: The invariant as we walk upwards is, that once we
+            //      encounter a parent area ID in the size_work_list,
+            //      we know that all sub areas already have been computed.
+            let (w, h) = self.areas[area_idx].resolve_size(|id| sizes[id]);
+            sizes[area_idx] = (w, h);
+            self.areas[area_idx].set_size(w, h);
+            println!("AREA ID {} == {},{}", area_idx, w, h);
+
+            // XXX: area_idx == 0 is the root area, so skip that
+            //      when pushing further parents!
+            if area_idx > 0 {
+                size_work_list.push_back(parents[area_idx]);
+            }
         }
     }
 
@@ -371,6 +465,10 @@ impl BlockFun {
             id2: usize, x2: usize, mut y2: usize
     ) -> Result<(), BlockDSPError>
     {
+        // TODO: We must prevent a block from being moved to any of their
+        //       sub areas! For this we need to dive into the current block
+        //       and record if the destination is any of the sub areas!
+
         let (block, xo, yo) =
             if let Some(area) = self.areas.get_mut(id) {
                 if let Some((block, xo, yo)) = area.remove_block_at(x, y) {
@@ -420,14 +518,14 @@ impl BlockFun {
 
     fn create_areas_for_block(&mut self, block: &mut Block) {
         if let Some(area_id) = &mut block.contains.0 {
-            let mut area = BlockArea::new(1, 1);
+            let mut area = Box::new(BlockArea::new(1, 1));
             area.set_auto_shrink(true);
             self.areas.push(area);
             *area_id = self.areas.len() - 1;
         }
 
         if let Some(area_id) = &mut block.contains.1 {
-            let mut area = BlockArea::new(1, 1);
+            let mut area = Box::new(BlockArea::new(1, 1));
             area.set_auto_shrink(true);
             self.areas.push(area);
             *area_id = self.areas.len() - 1;

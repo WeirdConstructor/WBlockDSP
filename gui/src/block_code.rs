@@ -55,6 +55,7 @@ pub struct BlockCodeStyle {
     border_clr:         (f32, f32, f32), // UI_PRIM_CLR
     port_select_clr:    (f32, f32, f32), // UI_SELECT_CLR
     grid_marker_clr:    (f32, f32, f32), // UI_ACCENT_DARK_CLR
+    with_markers:       bool,
 }
 
 impl BlockCodeStyle {
@@ -67,6 +68,7 @@ impl BlockCodeStyle {
             border_clr:         hxclr!(0x03fdcb),
             port_select_clr:    hxclr!(0xd73988),
             grid_marker_clr:    hxclr!(0x1e333d),
+            with_markers:       false,
         }
     }
 }
@@ -233,10 +235,12 @@ impl BlockCode {
                 let y = row as f32 * block_h;
 
                 let marker_px = (block_h * 0.2).floor();
-                draw_markers(
-                    p, self.style.grid_marker_clr,
-                    pos.x + x, pos.y + y,
-                    block_w, block_h, marker_px);
+                if self.style.with_markers {
+                    draw_markers(
+                        p, self.style.grid_marker_clr,
+                        pos.x + x, pos.y + y,
+                        block_w, block_h, marker_px);
+                }
             }
         }
 
