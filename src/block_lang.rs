@@ -14,6 +14,7 @@ pub struct Block {
     lbl:      String,
     inputs:   Vec<Option<String>>,
     outputs:  Vec<Option<String>>,
+    color:    usize,
 }
 
 impl Clone for Block {
@@ -26,6 +27,7 @@ impl Clone for Block {
             lbl:      self.lbl.clone(),
             inputs:   self.inputs.clone(),
             outputs:  self.outputs.clone(),
+            color:    self.color,
         }
     }
 }
@@ -97,6 +99,7 @@ impl BlockView for Block {
             } else { 0 }
         } else { 0 }
     }
+    fn custom_color(&self) -> Option<usize> { Some(self.color) }
 }
 
 
@@ -247,6 +250,7 @@ pub struct BlockType {
     pub area_count:     usize,
     pub user_input:     bool,
     pub description:    String,
+    pub color:          usize,
 }
 
 impl BlockType {
@@ -271,6 +275,7 @@ impl BlockType {
                 else { self.name.clone() },
             inputs:   self.inputs.clone(),
             outputs:  self.outputs.clone(),
+            color:    self.color,
         });
         self.touch_contains(&mut *block);
         block

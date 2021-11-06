@@ -46,7 +46,7 @@ macro_rules! hxclr {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct BlockCodeStyle {
     bg_clr:             (f32, f32, f32), // UI_ACCENT_BG1_CLR
     block_bg_hover_clr: (f32, f32, f32), // UI_ACCENT_CLR
@@ -56,10 +56,32 @@ pub struct BlockCodeStyle {
     port_select_clr:    (f32, f32, f32), // UI_SELECT_CLR
     grid_marker_clr:    (f32, f32, f32), // UI_ACCENT_DARK_CLR
     with_markers:       bool,
+    block_clrs:         Vec<(f32, f32, f32)>,
 }
 
 impl BlockCodeStyle {
     pub fn new_default() -> Self {
+        let block_clrs = vec![
+            hxclr!(0x922f93), // 0
+            hxclr!(0x862b37),
+            hxclr!(0xb45745),
+            hxclr!(0x835933),
+            hxclr!(0xa69b64),
+            hxclr!(0xbec8a6),
+            hxclr!(0x346c38), // 6
+            hxclr!(0x1fb349),
+            hxclr!(0x4cdb80),
+            hxclr!(0x59bca3),
+            hxclr!(0x228f9d),
+            hxclr!(0x03b5e7),
+            hxclr!(0x3b5eca), // 12
+            hxclr!(0x594fa1),
+            hxclr!(0xc2b2eb),
+            hxclr!(0xac70fa),
+            hxclr!(0x9850a9),
+            hxclr!(0xdc4fc1), // 17
+        ];
+
         Self {
             bg_clr:             hxclr!(0x111920),
             block_bg_hover_clr: hxclr!(0x922f93),
@@ -69,6 +91,7 @@ impl BlockCodeStyle {
             port_select_clr:    hxclr!(0xd73988),
             grid_marker_clr:    hxclr!(0x1e333d),
             with_markers:       false,
+            block_clrs,
         }
     }
 }
@@ -279,16 +302,25 @@ impl BlockCode {
                     }
                 }
 
-                let bg_color =
-                    if hover_here { self.style.block_bg_hover_clr }
-                    else { self.style.block_bg_clr };
-                let border_color =
-                    if hover_here { self.style.border_hover_clr }
-                    else { self.style.border_clr };
-
                 if let Some(block) =
                     self.code.borrow().block_at(area_id, col, row)
                 {
+
+                    let bg_color =
+                        if hover_here { self.style.block_bg_hover_clr }
+                        else { self.style.block_bg_clr };
+                    let border_color =
+                        if hover_here { self.style.border_hover_clr }
+                        else {
+                            block.custom_color()
+                                .map(|cidx|
+                                    self.style.block_clrs
+                                        .get(cidx)
+                                        .copied()
+                                        .unwrap_or((1.0, 0.0, 1.0)))
+                                .unwrap_or(self.style.border_clr)
+                        };
+
                     let w = block_w;
                     let h = block.rows() as f32 * block_h;
 

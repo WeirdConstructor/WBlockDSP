@@ -63,6 +63,7 @@ pub fn main() {
         area_count:     0,
         user_input:     true,
         description:    "A literal value, typed in by the user.".to_string(),
+        color:          1,
     });
 
     lang.borrow_mut().define(BlockType {
@@ -74,6 +75,7 @@ pub fn main() {
         area_count:     0,
         user_input:     false,
         description:    "Forwards the value one block".to_string(),
+        color:          6,
     });
 
     lang.borrow_mut().define(BlockType {
@@ -85,6 +87,7 @@ pub fn main() {
         area_count:     0,
         user_input:     false,
         description:    "Forwards the value one block and sends it to multiple destinations".to_string(),
+        color:          6,
     });
 
     lang.borrow_mut().define(BlockType {
@@ -96,6 +99,7 @@ pub fn main() {
         area_count:     0,
         user_input:     false,
         description:    "Forwards the value one block and sends it to multiple destinations".to_string(),
+        color:          6,
     });
 
     lang.borrow_mut().define(BlockType {
@@ -107,6 +111,7 @@ pub fn main() {
         area_count:     0,
         user_input:     true,
         description:    "Stores into a variable".to_string(),
+        color:          2,
     });
 
     lang.borrow_mut().define(BlockType {
@@ -118,6 +123,7 @@ pub fn main() {
         area_count:     0,
         user_input:     true,
         description:    "Loads a variable".to_string(),
+        color:          12,
     });
 
     lang.borrow_mut().define(BlockType {
@@ -130,6 +136,19 @@ pub fn main() {
         user_input:     false,
         description:    "Divides the controlflow based on a true (>= 0.5) \
                          or false (< 0.5) input value.".to_string(),
+        color:          0,
+    });
+
+    lang.borrow_mut().define(BlockType {
+        category:       "functions".to_string(),
+        name:           "sin".to_string(),
+        rows:           1,
+        inputs:         vec![Some("".to_string())],
+        outputs:        vec![Some("".to_string())],
+        area_count:     0,
+        user_input:     false,
+        description:    "Calculates the sine of the input".to_string(),
+        color:          16,
     });
 
     for fun_name in &["+", "-", "*", "/"] {
@@ -147,6 +166,7 @@ pub fn main() {
             area_count:     0,
             user_input:     false,
             description:    "A binary arithmetics operation".to_string(),
+            color:          4,
         });
     }
 
@@ -261,6 +281,15 @@ pub fn main() {
                         let (id, x, y) = pos.pos();
                         code.borrow_mut()
                             .instanciate_at(id, x, y, "get", Some("x".to_string()));
+                        code.borrow_mut()
+                            .recalculate_area_sizes();
+                    }});
+                spawn_button(state, pop_col, pop, "sin", current_pos.clone(), {
+                    let code = code.clone();
+                        move |state, pos| {
+                        let (id, x, y) = pos.pos();
+                        code.borrow_mut()
+                            .instanciate_at(id, x, y, "sin", None);
                         code.borrow_mut()
                             .recalculate_area_sizes();
                     }});

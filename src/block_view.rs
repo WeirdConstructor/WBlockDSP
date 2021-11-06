@@ -7,6 +7,7 @@ pub trait BlockView {
     fn has_output(&self, idx: usize) -> bool;
     fn input_label(&self, idx: usize, buf: &mut [u8]) -> usize;
     fn output_label(&self, idx: usize, buf: &mut [u8]) -> usize;
+    fn custom_color(&self) -> Option<usize>;
 }
 
 pub trait BlockCodeView {
