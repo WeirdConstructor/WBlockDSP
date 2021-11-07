@@ -25,13 +25,11 @@ impl BlockCodeView for DummyBlockCode {
         (16, 16)
     }
 
-    fn block_at(&self, id: usize, x: usize, y: usize) -> Option<&dyn BlockView> {
+    fn block_at(&self, id: usize, x: i64, y: i64) -> Option<&dyn BlockView> {
         None
     }
 
-    fn origin_at(&self, id: usize, x: usize, y: usize)
-        -> Option<(usize, usize)>
-    {
+    fn origin_at(&self, id: usize, x: i64, y: i64) -> Option<(i64, i64)> {
         None
     }
 }
@@ -103,8 +101,8 @@ pub enum BlockCodeMessage {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BlockPos {
-    Block { id: usize, x: usize, y: usize, row: usize, col: usize },
-    Cell  { id: usize, x: usize, y: usize },
+    Block { id: usize, x: i64, y: i64, row: usize, col: usize, rows: usize },
+    Cell  { id: usize, x: i64, y: i64 },
 }
 
 impl BlockPos {
@@ -115,21 +113,28 @@ impl BlockPos {
         }
     }
 
-    pub fn x(&self) -> usize {
+    pub fn x(&self) -> i64 {
         match self {
             BlockPos::Block { x, .. } => *x,
             BlockPos::Cell  { x, .. } => *x,
         }
     }
 
-    pub fn y(&self) -> usize {
+    pub fn y(&self) -> i64 {
         match self {
             BlockPos::Block { y, .. } => *y,
             BlockPos::Cell  { y, .. } => *y,
         }
     }
 
-    pub fn pos(&self) -> (usize, usize, usize) {
+    pub fn row_info(&self) -> (usize, usize) {
+        match self {
+            BlockPos::Block { rows, row, .. } => (*rows, *row),
+            BlockPos::Cell  { .. }            => (1, 0),
+        }
+    }
+
+    pub fn pos(&self) -> (usize, i64, i64) {
         match self {
             BlockPos::Block { id, x, y, .. } => (*id, *x, *y),
             BlockPos::Cell  { id, x, y, .. } => (*id, *x, *y),
@@ -147,11 +152,11 @@ pub struct BlockCode {
     block_size:     f32,
 
     areas:          Vec<Vec<(usize, Rect)>>,
-    hover:          Option<(usize, usize, usize, usize)>,
+    hover:          Option<(usize, i64, i64, usize)>,
 
     m_down:         Option<BlockPos>,
 
-    on_change:      Option<Box<dyn Fn(&mut Self, &mut State, Entity, (usize, usize))>>,
+    on_change:      Option<Box<dyn Fn(&mut Self, &mut State, Entity, (i64, i64))>>,
     on_expand:      Option<Box<dyn Fn(&mut Self, &mut State, Entity, usize)>>,
     on_click:       Option<Box<dyn Fn(&mut Self, &mut State, Entity, BlockPos, MouseButton)>>,
     on_drag:        Option<Box<dyn Fn(&mut Self, &mut State, Entity, BlockPos, BlockPos, MouseButton)>>,
@@ -184,7 +189,7 @@ impl BlockCode {
 
     pub fn on_change<F>(mut self, on_change: F) -> Self
     where
-        F: 'static + Fn(&mut Self, &mut State, Entity, (usize, usize)),
+        F: 'static + Fn(&mut Self, &mut State, Entity, (i64, i64)),
     {
         self.on_change = Some(Box::new(on_change));
 
@@ -273,8 +278,11 @@ impl BlockCode {
 
         let area_border_px = 4.0;
 
-        for row in 0..rows {
+        for row in -10..(rows as i64) {
             for col in 0..cols {
+                let col = col as i64;
+                let row = row as i64;
+
                 let x = col as f32 * block_w;
                 let y = row as f32 * block_h;
 
@@ -451,20 +459,35 @@ impl BlockCode {
                     }
 
                 } else if hover_here {
+
+                    let mut y_offs = 0.0;
+                    let mut h_add = 0.0;
+
+                    if let Some(down) = self.m_down {
+                        let (rows, grab_row) = down.row_info();
+
+                        y_offs = -(grab_row as f32 * block_h);
+                        h_add  = (rows - 1) as f32 * block_h;
+                    }
+
                     p.rect_stroke(
                         2.0, self.style.border_hover_clr,
                         pos.x + x + 1.0,
-                        pos.y + y + 1.0,
-                        block_w - 2.0, block_h - 2.0);
+                        pos.y + y + 1.0 + y_offs,
+                        block_w - 2.0,
+                        (h_add + block_h) - 2.0);
                 }
 
                 if let Some(down) = self.m_down {
                     if (area_id, col, row) == down.pos() {
+                        let (rows, grab_row) = down.row_info();
+
                         p.rect_stroke(
                             2.0, self.style.port_select_clr,
                             pos.x + x + 1.0,
-                            pos.y + y + 1.0,
-                            block_w - 2.0, block_h - 2.0);
+                            pos.y + y + 1.0 - grab_row as f32 * block_h,
+                            block_w - 2.0,
+                            (block_h * (rows as f32)) - 2.0);
                     }
                 }
             }
@@ -507,7 +530,7 @@ impl BlockCode {
         p.reset_clip_region();
     }
 
-    fn find_area_at(&self, x: f32, y: f32) -> Option<(usize, usize, usize, usize)> {
+    fn find_area_at(&self, x: f32, y: f32) -> Option<(usize, i64, i64, usize)> {
         let block_h = self.block_size;
         let block_w = block_h * 2.0;
 
@@ -518,8 +541,8 @@ impl BlockCode {
                 if pos.is_inside(x, y) {
                     let xo = x - pos.x;
                     let yo = y - pos.y;
-                    let xi = (xo / block_w).floor() as usize;
-                    let yi = (yo / block_h).floor() as usize;
+                    let xi = (xo / block_w).floor() as i64;
+                    let yi = (yo / block_h).floor() as i64;
 
                     let sub_col =
                         if (xo - xi as f32 * block_w) > (block_w * 0.5) {
@@ -541,8 +564,14 @@ impl BlockCode {
             if let Some((ox, oy)) =
                 self.code.borrow().origin_at(area, x, y)
             {
-                let row = y - oy;
-                Some(BlockPos::Block { id: area, x, y, col: subcol, row })
+                let rows =
+                    self.code.borrow()
+                        .block_at(area, ox, oy)
+                        .map(|b| b.rows())
+                        .unwrap_or(1);
+
+                let row = (y - oy).max(0) as usize;
+                Some(BlockPos::Block { id: area, x, y, col: subcol, row, rows })
             } else {
                 Some(BlockPos::Cell { id: area, x, y })
             }
