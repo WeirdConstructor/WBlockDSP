@@ -171,8 +171,23 @@ pub fn main() {
     }
 
     code.borrow_mut().instanciate_at(0, 1, 1, "number", Some("2.32".to_string()));
+    code.borrow_mut().instanciate_at(0, 2, 3, "number", Some("1.0".to_string()));
+    code.borrow_mut().instanciate_at(0, 2, 2, "number", Some("-1.0".to_string()));
+    code.borrow_mut().instanciate_at(0, 2, 1, "number", Some("0.5".to_string()));
     code.borrow_mut().instanciate_at(0, 3, 3, "+", None);
     code.borrow_mut().instanciate_at(0, 4, 3, "->3", None);
+    code.borrow_mut().instanciate_at(0, 2, 6, "if", None);
+
+    // TODO: Subroutines:
+    //  - make predefined subroutines with nargs=0..4 and one output.
+    //      - inside subroutines you can use arg1, arg2, arg3, ... to refer
+    //        to the subroutine arguments
+    //      - inside subroutine you specify the return value the same way
+    //        you do with "if".
+    //      - there are no scoped variables!
+    //  - you can add a name to the subroutine.
+    //  - when cloning a subroutine, a "call" is created.
+    //    the label will contain the subroutine name.
 
     let app =
         Application::new(
@@ -357,13 +372,21 @@ pub fn main() {
                                 if let BlockPos::Cell { .. } = pos {
                                     if let BlockPos::Block { .. } = pos2 {
                                         code.borrow_mut()
-                                            .clone_block_from_to(id2, x2, y2, id, x, y);
+                                            .clone_block_from_to(
+                                                id2, x2, y2, id, x, y);
                                         code.borrow_mut()
                                             .recalculate_area_sizes();
                                     }
                                 } else {
-                                    code.borrow_mut()
-                                        .move_block_from_to(id, x, y, id2, x2, y2);
+                                    if btn == MouseButton::Right {
+                                        code.borrow_mut()
+                                            .move_block_from_to(
+                                                id, x, y, id2, x2, y2);
+                                    } else {
+                                        code.borrow_mut()
+                                            .move_block_chain_from_to(
+                                                id, x, y, id2, x2, y2);
+                                    }
                                     code.borrow_mut()
                                         .recalculate_area_sizes();
                                 }

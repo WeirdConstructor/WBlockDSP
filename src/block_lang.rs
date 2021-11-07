@@ -176,6 +176,7 @@ impl BlockChain {
         for (_, x, y) in &mut self.load {
             *x += xo;
             *y += yo;
+            //d// println!("MOVE_BY_OFFS TO x={:3} y={:3}", *x, *y);
         }
     }
 
@@ -229,6 +230,76 @@ impl BlockChain {
 
         self.sort_load_pos();
     }
+
+    pub fn place_load(&mut self, area: &mut BlockArea) {
+        let load = std::mem::replace(&mut self.load, vec![]);
+        area.set_blocks_from(load);
+    }
+
+    pub fn try_fit_load_into_space(&mut self, area: &mut BlockArea) -> bool {
+        for (xo, yo) in &[
+            ( 0,  0), // where it currently is
+            ( 0, -1),
+            ( 0, -2),
+            ( 0, -3),
+            (-1,  0),
+            (-1, -1),
+            (-1, -2),
+            (-1, -3),
+            ( 1,  0),
+            ( 1, -1),
+            ( 1, -2),
+            ( 1, -3),
+            ( 0,  1),
+            ( 0,  2),
+            ( 0,  3),
+            (-1,  1),
+            (-1,  2),
+            (-1,  3),
+            ( 1,  1),
+            ( 1,  2),
+            ( 1,  3),
+        ] {
+            println!("TRY {},{}", *xo, *yo);
+            if self.area_has_space_for_load(area, *xo, *yo) {
+                self.move_by_offs(*xo, *yo);
+                return true;
+            }
+
+            //d// println!("RETRY xo={}, yo={}", *xo, *yo);
+        }
+
+        return false;
+    }
+
+    pub fn area_has_space_for_load(&mut self, area: &mut BlockArea, xoffs: i64, yoffs: i64) -> bool {
+        for (block, x, y) in self.load.iter() {
+            if !area.check_space_at(*x + xoffs, *y + yoffs, block.rows) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    pub fn area_is_subarea_of_loaded(
+        &mut self, area: usize, fun: &mut BlockFun
+    ) -> bool
+    {
+        let mut areas = vec![];
+
+        for (block, _, _) in self.load.iter() {
+            fun.all_sub_areas_of(block.as_ref(), &mut areas);
+        }
+
+        for a_id in areas.iter() {
+            if *a_id == area {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -237,6 +308,7 @@ pub struct BlockArea {
     origin_map:  HashMap<(i64, i64), (i64, i64)>,
     size:        (usize, usize),
     auto_shrink: bool,
+    header:      String,
 }
 
 impl BlockArea {
@@ -246,7 +318,12 @@ impl BlockArea {
             origin_map:  HashMap::new(),
             size:        (w, h),
             auto_shrink: false,
+            header:      "".to_string(),
         }
+    }
+
+    pub fn set_header(&mut self, header: String) {
+        self.header = header;
     }
 
     pub fn set_auto_shrink(&mut self, shrink: bool) {
@@ -286,12 +363,10 @@ impl BlockArea {
                 let mut has_input  = false;
                 let mut has_output = false;
 
-                if xo > 0 {
-                    block.for_input_ports(|idx| {
-                        check_port_conns.push((xo - 1, yo + (idx as i64), true));
-                        has_input = true;
-                    });
-                }
+                block.for_input_ports(|idx| {
+                    check_port_conns.push((xo - 1, yo + (idx as i64), true));
+                    has_input = true;
+                });
 
                 block.for_output_ports(|idx| {
                     check_port_conns.push((xo + 1, yo + (idx as i64), false));
@@ -356,6 +431,14 @@ impl BlockArea {
         let (xo, yo) = self.origin_map.get(&(x, y))?;
         let (xo, yo) = (*xo, *yo);
         self.blocks.get_mut(&(xo, yo)).map(|b| (b.as_mut(), xo, yo))
+    }
+
+    fn set_blocks_from(&mut self, list: Vec<(Box<Block>, i64, i64)>) {
+        for (block, x, y) in list.into_iter() {
+            self.blocks.insert((x, y), block);
+        }
+
+        self.update_origin_map();
     }
 
     fn set_block_at(&mut self, x: i64, y: i64, block: Box<Block>) {
@@ -644,14 +727,19 @@ impl BlockFun {
     }
 
     pub fn area_is_subarea_of(
-        &mut self, area_id: usize, blocks: &[(usize, i64, i64)]
+        &mut self, area_id: usize, a_id: usize, x: i64, y: i64
     ) -> bool
     {
         let mut areas = vec![];
 
-        for (a_id, x, y) in blocks {
-            self.all_sub_areas_of(*a_id, *x, *y, &mut areas);
-        }
+        let block =
+            if let Some(block) = self.block_ref(a_id, x, y) {
+                block.clone()
+            } else {
+                return false;
+            };
+
+        self.all_sub_areas_of(&block, &mut areas);
 
         for a_id in &areas {
             if area_id == *a_id {
@@ -663,14 +751,9 @@ impl BlockFun {
     }
 
     pub fn all_sub_areas_of(
-        &mut self, id: usize, x: i64, y: i64, areas: &mut Vec<usize>
+        &mut self, block: &Block, areas: &mut Vec<usize>
     ) {
-        let contains =
-            if let Some(block) = self.block_ref(id, x, y) {
-                block.contains.clone()
-            } else {
-                return;
-            };
+        let contains = block.contains.clone();
 
         let mut area_work_list = &mut self.area_work_dq;
         area_work_list.clear();
@@ -778,11 +861,52 @@ impl BlockFun {
                 .ok_or(BlockDSPError::NoBlockAt(id, x, y))?;
 
         chain.remove_load(area_clone.as_mut());
-        let (xo, yo) = chain.normalize_load_pos();
 
-        // From the top/left position of the original chain,
-        // calculate the offset to where we grabbed it.
-        let (grab_x_offs, grab_y_offs) = (x - xo, y - yo);
+        if id2 == id {
+            let move_x_offs = x2 - x;
+            let move_y_offs = y2 - y;
+            chain.move_by_offs(move_x_offs, move_y_offs);
+
+            if !chain.try_fit_load_into_space(&mut area_clone) {
+                return Err(BlockDSPError::NoSpaceAvailable(id, x2, y2, 1));
+            }
+
+            chain.place_load(&mut area_clone);
+            self.areas[id] = area_clone;
+
+        } else { // id2 != id
+            if chain.area_is_subarea_of_loaded(id2, self) {
+                return Err(BlockDSPError::CircularAction(id, id2));
+            }
+
+            let (xo, yo) = chain.normalize_load_pos();
+            let (grab_x_offs, grab_y_offs) = (xo - x, yo - y);
+
+            // println!("xo={}, yo={}, grab_x={}, grab_y={}, x2={}, y2={}",
+            //     xo, yo, grab_x_offs, grab_y_offs, x2, y2);
+
+            // XXX: .max(0) prevents us from moving the
+            //      chain outside the subarea accendentally!
+            chain.move_by_offs(
+                (grab_x_offs + x2).max(0),
+                (grab_y_offs + y2).max(0));
+
+            let mut area2_clone =
+                self.areas
+                    .get(id2)
+                    .ok_or(BlockDSPError::UnknownArea(id))?
+                    .clone();
+
+            if !chain.try_fit_load_into_space(&mut area2_clone) {
+                return Err(BlockDSPError::NoSpaceAvailable(id, x2, y2, 1));
+            }
+
+            chain.place_load(&mut area2_clone);
+
+            self.areas[id]  = area_clone;
+            self.areas[id2] = area2_clone;
+        }
+
 
 //        let mut chain =
 //            self.retrieve_block_chain_at(id, x, y, true)
@@ -799,11 +923,7 @@ impl BlockFun {
         id2: usize, x2: i64, mut y2: i64
     ) -> Result<(), BlockDSPError>
     {
-        // TODO: We must prevent a block from being moved to any of their
-        //       sub areas! For this we need to dive into the current block
-        //       and record if the destination is any of the sub areas!
-
-        if self.area_is_subarea_of(id2, &[(id, x, y)]) {
+        if self.area_is_subarea_of(id2, id, x, y) {
             return Err(BlockDSPError::CircularAction(id, id2));
         }
 
@@ -847,6 +967,7 @@ impl BlockFun {
     }
 
     fn create_areas_for_block(&mut self, block: &mut Block) {
+
         if let Some(area_id) = &mut block.contains.0 {
             let mut area = Box::new(BlockArea::new(1, 1));
             area.set_auto_shrink(true);
@@ -916,6 +1037,10 @@ impl BlockFun {
 }
 
 impl BlockCodeView for BlockFun {
+    fn area_header(&self, id: usize) -> Option<&str> {
+        self.areas.get(id).map(|a| &a.header[..])
+    }
+
     fn area_size(&self, id: usize) -> (usize, usize) {
         self.area_size(id)
     }

@@ -11,6 +11,7 @@ pub trait BlockView {
 }
 
 pub trait BlockCodeView {
+    fn area_header(&self, id: usize) -> Option<&str>;
     fn area_size(&self, id: usize) -> (usize, usize);
     fn block_at(&self, id: usize, x: i64, y: i64) -> Option<&dyn BlockView>;
     fn origin_at(&self, id: usize, x: i64, y: i64) -> Option<(i64, i64)>;

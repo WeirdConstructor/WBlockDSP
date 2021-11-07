@@ -21,6 +21,8 @@ impl DummyBlockCode {
 }
 
 impl BlockCodeView for DummyBlockCode {
+    fn area_header(&self, id: usize) -> Option<&str> { None }
+
     fn area_size(&self, id: usize) -> (usize, usize) {
         (16, 16)
     }
@@ -251,6 +253,16 @@ impl BlockCode {
 
         let block_h = self.block_size;
         let block_w = block_h * 2.0;
+
+        if let Some(s) = self.code.borrow().area_header(area_id) {
+            p.label(
+                self.block_size * 0.4,
+                -1,
+                self.style.border_clr,
+                pos.x, pos.y,
+                pos.w, block_h,
+                s);
+        }
 
         let cols = (pos.w / block_w).ceil() as usize;
         let rows = (pos.h / block_h).ceil() as usize;
