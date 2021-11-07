@@ -207,6 +207,65 @@ impl BlockChain {
         });
     }
 
+    pub fn get_connected_inputs_from_load_at_x(&self, x_split: i64) -> Vec<(i64, i64)> {
+        let mut output_points = vec![];
+        for (block, x, y) in &self.load {
+            if *x == x_split {
+                block.for_output_ports(|row| {
+                    output_points.push(y + (row as i64));
+                });
+            }
+        }
+
+        let mut connection_pos = vec![];
+
+        for (block, x, y) in &self.load {
+            if *x == (x_split + 1) {
+                block.for_input_ports(|row| {
+                    if output_points.iter()
+                        .find(|&&out_y| out_y == (y + (row as i64)))
+                        .is_some()
+                    {
+                        connection_pos.push((*x, y + (row as i64)));
+                    }
+                });
+            }
+        }
+
+        connection_pos
+    }
+
+//    pub fn join_load_after_x(&mut self, x_join: i64, y_split: i64) -> bool {
+//        let filler_pos : Vec<(i64, i64)> =
+//            self.get_connected_inputs_from_load_at_x(x_split);
+//        if filler_pos.len() > 1
+//           || (filler_pos.len() == 1 && filler_pos[0] != (x_join, y_split)
+//    }
+
+    pub fn split_load_after_x(
+        &mut self, x_split: i64, y_split: i64, filler: Option<&BlockType>
+    ) {
+        let filler_pos : Vec<(i64, i64)> =
+            self.get_connected_inputs_from_load_at_x(x_split);
+
+        for (block, x, y) in &mut self.load {
+            if *x > x_split {
+                *x += 1;
+            }
+        }
+
+        if let Some(filler) = filler {
+            for (x, y) in filler_pos {
+                if y == y_split { continue; }
+                let filler_block = filler.instanciate_block(None);
+
+                self.load.push((filler_block, x, y));
+            }
+        }
+
+        self.sort_load_pos();
+    }
+
     pub fn clone_load(&mut self, area: &mut BlockArea) {
         self.load.clear();
 
@@ -844,6 +903,47 @@ impl BlockFun {
         }
     }
 
+    pub fn split_block_chain_after(
+        &mut self,
+        id: usize, x: i64, y: i64, filler_type: Option<&str>
+    ) -> Result<(), BlockDSPError>
+    {
+        let mut area_clone =
+            self.areas
+                .get(id)
+                .ok_or(BlockDSPError::UnknownArea(id))?
+                .clone();
+
+        let mut chain =
+            area_clone.chain_at(x, y)
+                .ok_or(BlockDSPError::NoBlockAt(id, x, y))?;
+
+        chain.remove_load(area_clone.as_mut());
+
+        let lang = self.language.borrow();
+        let typ : Option<&BlockType> =
+            if let Some(filler_type) = filler_type {
+                Some(lang.types.get(filler_type)
+                    .ok_or(
+                        BlockDSPError::UnknownLanguageType(
+                            filler_type.to_string()))?)
+            } else {
+                None
+            };
+
+        chain.split_load_after_x(x, y, typ);
+
+        if !chain.area_has_space_for_load(&mut area_clone, 0, 0) {
+            return Err(BlockDSPError::NoSpaceAvailable(id, x, y, 0));
+        }
+
+        chain.place_load(&mut area_clone);
+
+        self.areas[id] = area_clone;
+
+        Ok(())
+    }
+
     pub fn move_block_chain_from_to(
         &mut self,
         id: usize, x: i64, y: i64,
@@ -868,7 +968,7 @@ impl BlockFun {
             chain.move_by_offs(move_x_offs, move_y_offs);
 
             if !chain.try_fit_load_into_space(&mut area_clone) {
-                return Err(BlockDSPError::NoSpaceAvailable(id, x2, y2, 1));
+                return Err(BlockDSPError::NoSpaceAvailable(id, x2, y2, 0));
             }
 
             chain.place_load(&mut area_clone);
@@ -1016,6 +1116,18 @@ impl BlockFun {
             area.set_block_at(x, y, block);
         }
 
+        Ok(())
+    }
+
+    pub fn remove_at(
+        &mut self, id: usize, x: i64, y: i64
+    ) -> Result<(), BlockDSPError>
+    {
+        let area =
+            self.areas.get_mut(id)
+                .ok_or(BlockDSPError::UnknownArea(id))?;
+        area.remove_at(x, y)
+            .ok_or(BlockDSPError::NoBlockAt(id, x, y))?;
         Ok(())
     }
 

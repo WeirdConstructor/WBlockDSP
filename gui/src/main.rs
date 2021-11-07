@@ -348,12 +348,19 @@ pub fn main() {
                                         code.borrow_mut()
                                             .shift_port(id, x, y, row, col == 1);
                                     } else {
-                                        let chain =
+                                        if col == 1 {
                                             code.borrow_mut()
-                                                .retrieve_block_chain_at(
-                                                    id, x, y, false);
-                                        println!("BLOCK CHAIN: {:#?}", chain);
+                                                .split_block_chain_after(
+                                                    id, x, y, Some("->"));
+                                        } else {
+                                            code.borrow_mut()
+                                                .split_block_chain_after(
+                                                    id, x - 1, y, None);
+                                        }
                                     }
+
+                                    code.borrow_mut()
+                                        .recalculate_area_sizes();
                                 } else {
                                     println!("CLICK {:?}", pos);
                                     state.insert_event(
@@ -369,6 +376,8 @@ pub fn main() {
                                 let (id, x, y)    = pos.pos();
                                 let (id2, x2, y2) = pos2.pos();
 
+                                println!("P1={:?} P2={:?}", pos, pos2);
+
                                 if let BlockPos::Cell { .. } = pos {
                                     if let BlockPos::Block { .. } = pos2 {
                                         code.borrow_mut()
@@ -383,10 +392,16 @@ pub fn main() {
                                             .move_block_from_to(
                                                 id, x, y, id2, x2, y2);
                                     } else {
-                                        code.borrow_mut()
-                                            .move_block_chain_from_to(
-                                                id, x, y, id2, x2, y2);
+                                        if pos.pos() == pos2.pos() {
+                                            code.borrow_mut()
+                                                .remove_at(id, x, y);
+                                        } else {
+                                            code.borrow_mut()
+                                                .move_block_chain_from_to(
+                                                    id, x, y, id2, x2, y2);
+                                        }
                                     }
+
                                     code.borrow_mut()
                                         .recalculate_area_sizes();
                                 }
