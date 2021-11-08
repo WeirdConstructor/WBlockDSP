@@ -714,27 +714,10 @@ impl BlockLanguage {
     }
 }
 
-pub trait BlockASTNode : std::fmt::Debug {
-    fn new_rc(typ: &str, lbl: &str) -> Rc<RefCell<Self>>;
-    fn add_node(&mut self, out_port: String, node: Rc<RefCell<Self>>);
+pub trait BlockASTNode : std::fmt::Debug + Clone {
+    fn from(typ: &str, lbl: &str) -> Self;
+    fn add_node(&self, out_port: String, node: Self);
 }
-
-//#[derive(Debug, Clone)]
-//pub struct BlockASTNode {
-//    pub typ:   String,
-//    pub lbl:   String,
-//    pub nodes: Vec<(String, Rc<RefCell<BlockASTNode>>)>,
-//}
-//
-//impl BlockASTNode {
-//    pub fn new_rc(typ: &str, lbl: &str) -> Rc<RefCell<Self>> {
-//        Rc::new(RefCell::new(Self {
-//            typ:    typ.to_string(),
-//            lbl:    lbl.to_string(),
-//            nodes:  vec![],
-//        }))
-//    }
-//}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum BlockDSPError {
@@ -787,7 +770,7 @@ impl BlockFun {
         }
     }
 
-    pub fn generate_tree<Node: BlockASTNode>(&self, null_typ: &str) -> Result<Rc<RefCell<Node>>, BlockDSPError> {
+    pub fn generate_tree<Node: BlockASTNode>(&self, null_typ: &str) -> Result<Node, BlockDSPError> {
         // This is a type for filling in unfilled outputs:
         let lang = self.language.borrow();
         let null_typ =
@@ -804,16 +787,16 @@ impl BlockFun {
         let main_sinks = main_area.collect_sinks();
 
         let mut tree_builder
-            : Vec<(usize, i64, i64, Rc<RefCell<Node>>)>
+            : Vec<(usize, i64, i64, Node)>
             = vec![];
 
-        let mut main_node = Node::new_rc("<<root>>", "");
+        let mut main_node = Node::from("<<root>>", "");
 
         for (x, y) in main_sinks {
             if let Some((block, x, y)) = main_area.ref_at_origin(x, y) {
-                let node = Node::new_rc(&block.typ, &block.lbl);
+                let node = Node::from(&block.typ, &block.lbl);
 
-                main_node.borrow_mut().add_node("".to_string(), node.clone());
+                main_node.add_node("".to_string(), node.clone());
 
                 block.for_input_ports(|row| {
                     tree_builder.push((0, x - 1, y + (row as i64), node.clone()));
@@ -823,7 +806,7 @@ impl BlockFun {
 
         // A HashMap to store those blocks, that have multiple outputs.
         // Their AST nodes need to be shared to multiple parent nodes.
-        let mut multi_outs : HashMap<(usize, i64, i64), Rc<RefCell<Node>>>
+        let mut multi_outs : HashMap<(usize, i64, i64), Node>
             = HashMap::new();
 
         // We do a depth first search here:
@@ -839,13 +822,13 @@ impl BlockFun {
                     if let Some(node) = multi_outs.get(&(id, xo, yo)) {
                         node.clone()
                     } else {
-                        BlockASTNode::new_rc(&block.typ, &block.lbl)
+                        Node::from(&block.typ, &block.lbl)
                     };
 
                 if let Some(out_name) =
                     block.outputs.get(row as usize).cloned().flatten()
                 {
-                    ast_node.borrow_mut().add_node(out_name, node.clone());
+                    ast_node.add_node(out_name, node.clone());
                 }
 
                 block.for_input_ports_reverse(|row| {
@@ -853,8 +836,8 @@ impl BlockFun {
                         (0, xo - 1, yo + (row as i64), node.clone()));
                 });
             } else {
-                let node = BlockASTNode::new_rc(&null_typ, "");
-                ast_node.borrow_mut().add_node("".to_string(), node.clone());
+                let node = Node::from(&null_typ, "");
+                ast_node.add_node("".to_string(), node.clone());
             }
         }
 

@@ -54,49 +54,50 @@ fn spawn_button<F: 'static + Fn(&mut State, BlockPos)>(
 pub struct ASTNode {
     pub typ:   String,
     pub lbl:   String,
-    pub nodes: Vec<(String, Rc<RefCell<ASTNode>>)>,
+    pub nodes: Vec<(String, ASTNodeRef)>,
 }
 
-impl ASTNode {
+#[derive(Debug, Clone)]
+pub struct ASTNodeRef(Rc<RefCell<ASTNode>>);
+
+impl ASTNodeRef {
     pub fn walk_dump(&self, output: &str, indent: usize) {
         let indent_str = "  ".repeat(indent + 1);
-        println!("{}ASTNode[{}, {}] (out: {})", indent_str, self.typ, self.lbl, output);
-        for (out, n) in &self.nodes {
-            n.borrow().walk_dump(&out, indent + 1);
+        if output.len() > 0 {
+            println!(
+                "{}ASTNode[{}, {}] (out: {})",
+                indent_str, self.0.borrow().typ, self.0.borrow().lbl,
+                output);
+        } else {
+            println!(
+                "{}ASTNode[{}, {}]",
+                indent_str, self.0.borrow().typ, self.0.borrow().lbl);
+        }
+
+        for (out, n) in &self.0.borrow().nodes {
+            n.walk_dump(&out, indent + 1);
         }
     }
 }
 
-impl BlockASTNode for ASTNode {
-    fn new_rc(typ: &str, lbl: &str) -> Rc<RefCell<Self>> {
-        Rc::new(RefCell::new(Self {
+impl BlockASTNode for ASTNodeRef {
+    fn from(typ: &str, lbl: &str) -> ASTNodeRef {
+        ASTNodeRef(Rc::new(RefCell::new(ASTNode {
             typ:    typ.to_string(),
             lbl:    lbl.to_string(),
             nodes:  vec![],
-        }))
+        })))
     }
 
-    fn add_node(&mut self, out_port: String, node: Rc<RefCell<Self>>) {
-        self.nodes.push((out_port, node));
+    fn add_node(&self, out_port: String, node: ASTNodeRef) {
+        self.0.borrow_mut().nodes.push((out_port, node));
     }
 }
-//
-//impl std::fmt::Debug for ASTNode {
-//    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//        f.write_fmt(
-//            format_args!("ASTNode({}, {})[", self.typ, self.lbl))?;
-//        f.debug_list()
-//         .entries(
-//         .finish()
-//    }
-//}
 
 pub fn gen_code(code: &mut BlockFun) {
-    let mut tree =
-        code.generate_tree::<ASTNode>("zero").unwrap();
+    let mut tree = code.generate_tree::<ASTNodeRef>("zero").unwrap();
 
-//    println!("TREE: {:?}", tree);
-    tree.borrow().walk_dump("", 0);
+    tree.walk_dump("", 0);
 }
 
 pub fn main() {
