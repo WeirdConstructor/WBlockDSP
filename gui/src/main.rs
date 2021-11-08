@@ -62,15 +62,16 @@ pub struct ASTNodeRef(Rc<RefCell<ASTNode>>);
 
 impl ASTNodeRef {
     pub fn walk_dump(&self, output: &str, indent: usize) {
-        let indent_str = "  ".repeat(indent + 1);
+        let indent_str = "   ".repeat(indent + 1);
+
         if output.len() > 0 {
             println!(
-                "{}ASTNode[{}, {}] (out: {})",
+                "{}{}[{}] (out: {})",
                 indent_str, self.0.borrow().typ, self.0.borrow().lbl,
                 output);
         } else {
             println!(
-                "{}ASTNode[{}, {}]",
+                "{}{}[{}]",
                 indent_str, self.0.borrow().typ, self.0.borrow().lbl);
         }
 
