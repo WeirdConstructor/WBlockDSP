@@ -75,10 +75,38 @@ impl Block {
         }
     }
 
+    /// Returns the number of output ports of this [Block].
+    pub fn count_outputs(&self) -> usize {
+        let mut count = 0;
+
+        for i in 0..self.rows {
+            if let Some(o) = self.outputs.get(i) {
+                if o.is_some() {
+                    count += 1;
+                }
+            }
+        }
+
+        count
+    }
+
     /// Calls `f` for every input port that is available.
     /// `f` gets passed the row index.
     pub fn for_input_ports<F: FnMut(usize)>(&self, mut f: F) {
         for i in 0..self.rows {
+            if let Some(o) = self.inputs.get(i) {
+                if o.is_some() {
+                    f(i);
+                }
+            }
+        }
+    }
+
+    /// Calls `f` for every input port that is available.
+    /// `f` gets passed the row index.
+    pub fn for_input_ports_reverse<F: FnMut(usize)>(&self, mut f: F) {
+        for i in 1..=self.rows {
+            let i = self.rows - i;
             if let Some(o) = self.inputs.get(i) {
                 if o.is_some() {
                     f(i);
@@ -470,6 +498,22 @@ impl BlockArea {
         }))
     }
 
+    pub fn collect_sinks(&self) -> Vec<(i64, i64)> {
+        let mut sinks_out = vec![];
+
+        for ((x, y), block) in &self.blocks {
+            if block.count_outputs() == 0 {
+                sinks_out.push((*x, *y));
+            }
+        }
+
+        sinks_out.sort_by(|&(x0, y0), &(x1, y1)| {
+            y0.cmp(&y1).then(x0.cmp(&x1))
+        });
+
+        sinks_out
+    }
+
     fn ref_at(&self, x: i64, y: i64) -> Option<&Block> {
         let (xo, yo) = self.origin_map.get(&(x, y))?;
         self.blocks.get(&(*xo, *yo)).map(|b| b.as_ref())
@@ -670,6 +714,28 @@ impl BlockLanguage {
     }
 }
 
+pub trait BlockASTNode : std::fmt::Debug {
+    fn new_rc(typ: &str, lbl: &str) -> Rc<RefCell<Self>>;
+    fn add_node(&mut self, out_port: String, node: Rc<RefCell<Self>>);
+}
+
+//#[derive(Debug, Clone)]
+//pub struct BlockASTNode {
+//    pub typ:   String,
+//    pub lbl:   String,
+//    pub nodes: Vec<(String, Rc<RefCell<BlockASTNode>>)>,
+//}
+//
+//impl BlockASTNode {
+//    pub fn new_rc(typ: &str, lbl: &str) -> Rc<RefCell<Self>> {
+//        Rc::new(RefCell::new(Self {
+//            typ:    typ.to_string(),
+//            lbl:    lbl.to_string(),
+//            nodes:  vec![],
+//        }))
+//    }
+//}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum BlockDSPError {
     UnknownArea(usize),
@@ -719,6 +785,80 @@ impl BlockFun {
         if let Some(block) = self.block_ref_mut(id, x, y) {
             block.shift_port(row, output);
         }
+    }
+
+    pub fn generate_tree<Node: BlockASTNode>(&self, null_typ: &str) -> Result<Rc<RefCell<Node>>, BlockDSPError> {
+        // This is a type for filling in unfilled outputs:
+        let lang = self.language.borrow();
+        let null_typ =
+            lang.types.get(null_typ)
+                .ok_or(
+                    BlockDSPError::UnknownLanguageType(
+                        null_typ.to_string()))?
+                .name.to_string();
+
+        // Next we build the root AST node set:
+        let main_area =
+            self.areas.get(0)
+                .ok_or(BlockDSPError::UnknownArea(0))?;
+        let main_sinks = main_area.collect_sinks();
+
+        let mut tree_builder
+            : Vec<(usize, i64, i64, Rc<RefCell<Node>>)>
+            = vec![];
+
+        let mut main_node = Node::new_rc("<<root>>", "");
+
+        for (x, y) in main_sinks {
+            if let Some((block, x, y)) = main_area.ref_at_origin(x, y) {
+                let node = Node::new_rc(&block.typ, &block.lbl);
+
+                main_node.borrow_mut().add_node("".to_string(), node.clone());
+
+                block.for_input_ports(|row| {
+                    tree_builder.push((0, x - 1, y + (row as i64), node.clone()));
+                });
+            }
+        }
+
+        // A HashMap to store those blocks, that have multiple outputs.
+        // Their AST nodes need to be shared to multiple parent nodes.
+        let mut multi_outs : HashMap<(usize, i64, i64), Rc<RefCell<Node>>>
+            = HashMap::new();
+
+        // We do a depth first search here:
+        while let Some((id, x, y, ast_node)) = tree_builder.pop() {
+            let area =
+                self.areas.get(id)
+                    .ok_or(BlockDSPError::UnknownArea(id))?;
+
+            if let Some((block, xo, yo)) = area.ref_at_origin(x, y) {
+                let row = y - yo;
+
+                let node =
+                    if let Some(node) = multi_outs.get(&(id, xo, yo)) {
+                        node.clone()
+                    } else {
+                        BlockASTNode::new_rc(&block.typ, &block.lbl)
+                    };
+
+                if let Some(out_name) =
+                    block.outputs.get(row as usize).cloned().flatten()
+                {
+                    ast_node.borrow_mut().add_node(out_name, node.clone());
+                }
+
+                block.for_input_ports_reverse(|row| {
+                    tree_builder.push(
+                        (0, xo - 1, yo + (row as i64), node.clone()));
+                });
+            } else {
+                let node = BlockASTNode::new_rc(&null_typ, "");
+                ast_node.borrow_mut().add_node("".to_string(), node.clone());
+            }
+        }
+
+        Ok(main_node)
     }
 
     pub fn recalculate_area_sizes(&mut self) {

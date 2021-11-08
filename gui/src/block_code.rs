@@ -158,7 +158,6 @@ pub struct BlockCode {
 
     m_down:         Option<BlockPos>,
 
-    on_change:      Option<Box<dyn Fn(&mut Self, &mut State, Entity, (i64, i64))>>,
     on_expand:      Option<Box<dyn Fn(&mut Self, &mut State, Entity, usize)>>,
     on_click:       Option<Box<dyn Fn(&mut Self, &mut State, Entity, BlockPos, MouseButton)>>,
     on_drag:        Option<Box<dyn Fn(&mut Self, &mut State, Entity, BlockPos, BlockPos, MouseButton)>>,
@@ -181,21 +180,11 @@ impl BlockCode {
             hover:          None,
             m_down:         None,
 
-            on_change:      None,
             on_expand:      None,
             on_click:       None,
             on_drag:        None,
             on_hover:       None,
         }
-    }
-
-    pub fn on_change<F>(mut self, on_change: F) -> Self
-    where
-        F: 'static + Fn(&mut Self, &mut State, Entity, (i64, i64)),
-    {
-        self.on_change = Some(Box::new(on_change));
-
-        self
     }
 
     pub fn on_expand<F>(mut self, on_expand: F) -> Self
@@ -666,22 +655,6 @@ impl Widget for BlockCode {
                     let (x, y) = (state.mouse.cursorx, state.mouse.cursory);
                     self.m_down = self.find_pos_at(x, y);
 
-//                    self.
-//                    self.drag = true;
-//                    self.drag_src_idx = self.xy2pos(state, entity, x, y);
-//
-//                    if let Some((inputs, _)) = self.drag_src_idx {
-//                        if inputs {
-//                            if self.items.0.len() == 1 {
-//                                self.drag_src_idx = Some((false, 0));
-//                            }
-//                        } else {
-//                            if self.items.1.len() == 1 {
-//                                self.drag_src_idx = Some((true, 0));
-//                            }
-//                        }
-//                    }
-//
                     state.capture(entity);
                     state.insert_event(
                         Event::new(WindowEvent::Redraw)
@@ -692,7 +665,6 @@ impl Widget for BlockCode {
 
                     let m_up = self.find_pos_at(x, y);
                     if m_up == self.m_down {
-                        println!("CLICK: {:?}", m_up);
                         if let Some(pos) = m_up {
                             if let Some(cb) = self.on_click.take() {
                                 (*cb)(self, state, entity, pos, *btn);
@@ -700,7 +672,6 @@ impl Widget for BlockCode {
                             }
                         }
                     } else {
-                        println!("DRAG: {:?} => {:?}", self.m_down, m_up);
                         if let (Some(down_pos), Some(up_pos)) =
                             (self.m_down, m_up)
                         {
@@ -713,20 +684,6 @@ impl Widget for BlockCode {
 
                     self.m_down = None;
 
-//                    if let Some((_drag, con)) = self.get_current_con() {
-//                        self.con = Some(con);
-//
-//                        if let Some(callback) = self.on_change.take() {
-//                            (callback)(self, state, entity, con);
-//                            self.on_change = Some(callback);
-//                        }
-//                    } else {
-//                        self.con = None;
-//                    }
-//
-//                    self.drag = false;
-//                    self.drag_src_idx = None;
-//
                     state.release(entity);
                     state.insert_event(
                         Event::new(WindowEvent::Redraw)
