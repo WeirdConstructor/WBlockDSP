@@ -54,29 +54,30 @@ fn spawn_button<F: 'static + Fn(&mut State, BlockPos)>(
 pub struct ASTNode {
     pub typ:   String,
     pub lbl:   String,
-    pub nodes: Vec<(String, ASTNodeRef)>,
+    pub nodes: Vec<(String, String, ASTNodeRef)>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ASTNodeRef(Rc<RefCell<ASTNode>>);
 
 impl ASTNodeRef {
-    pub fn walk_dump(&self, output: &str, indent: usize) {
+    pub fn walk_dump(&self, input: &str, output: &str, indent: usize) {
         let indent_str = "   ".repeat(indent + 1);
 
-        if output.len() > 0 {
-            println!(
-                "{}{}[{}] (out: {})",
-                indent_str, self.0.borrow().typ, self.0.borrow().lbl,
-                output);
-        } else {
-            println!(
-                "{}{}[{}]",
-                indent_str, self.0.borrow().typ, self.0.borrow().lbl);
-        }
+        let out_port =
+            if output.len() > 0 { format!("(out: {})", output) }
+            else { "".to_string() };
+        let in_port =
+            if input.len() > 0 { format!("(in: {})", input) }
+            else { "".to_string() };
 
-        for (out, n) in &self.0.borrow().nodes {
-            n.walk_dump(&out, indent + 1);
+        println!(
+            "{}{}[{}] {}{}",
+            indent_str, self.0.borrow().typ, self.0.borrow().lbl,
+            out_port, in_port);
+
+        for (inp, out, n) in &self.0.borrow().nodes {
+            n.walk_dump(&inp, &out, indent + 1);
         }
     }
 }
@@ -90,15 +91,15 @@ impl BlockASTNode for ASTNodeRef {
         })))
     }
 
-    fn add_node(&self, out_port: String, node: ASTNodeRef) {
-        self.0.borrow_mut().nodes.push((out_port, node));
+    fn add_node(&self, in_port: String, out_port: String, node: ASTNodeRef) {
+        self.0.borrow_mut().nodes.push((in_port, out_port, node));
     }
 }
 
 pub fn gen_code(code: &mut BlockFun) {
     let mut tree = code.generate_tree::<ASTNodeRef>("zero").unwrap();
 
-    tree.walk_dump("", 0);
+    tree.walk_dump("", "", 0);
 }
 
 pub fn main() {
@@ -203,6 +204,30 @@ pub fn main() {
     });
 
     lang.borrow_mut().define(BlockType {
+        category:       "nodes".to_string(),
+        name:           "1pole".to_string(),
+        rows:           2,
+        inputs:         vec![Some("in".to_string()), Some("f".to_string())],
+        outputs:        vec![Some("lp".to_string()), Some("hp".to_string())],
+        area_count:     0,
+        user_input:     false,
+        description:    "Runs a simple one pole filter on the input".to_string(),
+        color:          8,
+    });
+
+    lang.borrow_mut().define(BlockType {
+        category:       "nodes".to_string(),
+        name:           "svf".to_string(),
+        rows:           3,
+        inputs:         vec![Some("in".to_string()), Some("f".to_string()), Some("r".to_string())],
+        outputs:        vec![Some("lp".to_string()), Some("bp".to_string()), Some("hp".to_string())],
+        area_count:     0,
+        user_input:     false,
+        description:    "Runs a state variable filter on the input".to_string(),
+        color:          8,
+    });
+
+    lang.borrow_mut().define(BlockType {
         category:       "functions".to_string(),
         name:           "sin".to_string(),
         rows:           1,
@@ -212,6 +237,18 @@ pub fn main() {
         user_input:     false,
         description:    "Calculates the sine of the input".to_string(),
         color:          16,
+    });
+
+    lang.borrow_mut().define(BlockType {
+        category:       "nodes".to_string(),
+        name:           "delay".to_string(),
+        rows:           2,
+        inputs:         vec![Some("in".to_string()), Some("t".to_string())],
+        outputs:        vec![Some("".to_string())],
+        area_count:     0,
+        user_input:     false,
+        description:    "Runs a linearly interpolated delay on the input".to_string(),
+        color:          8,
     });
 
     for fun_name in &["+", "-", "*", "/"] {
@@ -265,7 +302,7 @@ pub fn main() {
                 let pop = Popup::new().build(state, window.entity(), |builder| {
                     builder
                         .set_width(Pixels(100.0))
-                        .set_height(Pixels(400.0))
+                        .set_height(Pixels(430.0))
                 });
 
                 let pop_col = Column::new().build(state, pop, |builder| builder);
@@ -388,6 +425,39 @@ pub fn main() {
                         let (id, x, y) = pos.pos();
                         code.borrow_mut()
                             .instanciate_at(id, x, y, "sin", None);
+                        code.borrow_mut()
+                            .recalculate_area_sizes();
+
+                        gen_code(&mut code.borrow_mut());
+                    }});
+                spawn_button(state, pop_col, pop, "1pole", current_pos.clone(), {
+                    let code = code.clone();
+                        move |state, pos| {
+                        let (id, x, y) = pos.pos();
+                        code.borrow_mut()
+                            .instanciate_at(id, x, y, "1pole", None);
+                        code.borrow_mut()
+                            .recalculate_area_sizes();
+
+                        gen_code(&mut code.borrow_mut());
+                    }});
+                spawn_button(state, pop_col, pop, "svf", current_pos.clone(), {
+                    let code = code.clone();
+                        move |state, pos| {
+                        let (id, x, y) = pos.pos();
+                        code.borrow_mut()
+                            .instanciate_at(id, x, y, "svf", None);
+                        code.borrow_mut()
+                            .recalculate_area_sizes();
+
+                        gen_code(&mut code.borrow_mut());
+                    }});
+                spawn_button(state, pop_col, pop, "delay", current_pos.clone(), {
+                    let code = code.clone();
+                        move |state, pos| {
+                        let (id, x, y) = pos.pos();
+                        code.borrow_mut()
+                            .instanciate_at(id, x, y, "delay", None);
                         code.borrow_mut()
                             .recalculate_area_sizes();
 

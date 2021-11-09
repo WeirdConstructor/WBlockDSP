@@ -158,6 +158,9 @@ pub struct BlockCode {
 
     m_down:         Option<BlockPos>,
 
+    shift_offs:     (f32, f32),
+    tmp_shift_offs: Option<(f32, f32)>,
+
     on_expand:      Option<Box<dyn Fn(&mut Self, &mut State, Entity, usize)>>,
     on_click:       Option<Box<dyn Fn(&mut Self, &mut State, Entity, BlockPos, MouseButton)>>,
     on_drag:        Option<Box<dyn Fn(&mut Self, &mut State, Entity, BlockPos, BlockPos, MouseButton)>>,
@@ -179,6 +182,9 @@ impl BlockCode {
             areas:          vec![],
             hover:          None,
             m_down:         None,
+
+            shift_offs:     (0.0, 0.0),
+            tmp_shift_offs: None,
 
             on_expand:      None,
             on_click:       None,
@@ -258,12 +264,27 @@ impl BlockCode {
 
         p.rect_fill(self.style.bg_clr, pos.x, pos.y, pos.w, pos.h);
 
-        for row in 0..rows {
-            for col in 0..cols {
+        let shift_x = (self.shift_offs.0 + self.tmp_shift_offs.map(|o| o.0).unwrap_or(0.0)).round();
+        let shift_y = (self.shift_offs.1 + self.tmp_shift_offs.map(|o| o.1).unwrap_or(0.0)).round();
+
+        let draw_col_offs =
+            if level == 0 { -((shift_x / block_w).round() as i64) }
+            else { 0 };
+        let draw_row_offs =
+            if level == 0 { -((shift_y / block_h).round() as i64) }
+            else { 0 };
+
+        if level == 0 {
+            p.translate(shift_x, shift_y);
+        }
+
+        for row in draw_row_offs..(rows as i64 + draw_row_offs) {
+            for col in draw_col_offs..(cols as i64 + draw_col_offs) {
                 let x = col as f32 * block_w;
                 let y = row as f32 * block_h;
 
                 let marker_px = (block_h * 0.2).floor();
+
                 if self.style.with_markers {
                     draw_markers(
                         p, self.style.grid_marker_clr,
@@ -279,8 +300,8 @@ impl BlockCode {
 
         let area_border_px = 4.0;
 
-        for row in -10..(rows as i64) {
-            for col in 0..cols {
+        for row in (-10 + draw_row_offs)..((rows as i64) + draw_row_offs) {
+            for col in (-5 + draw_col_offs)..((cols as i64) + draw_col_offs + 1) {
                 let col = col as i64;
                 let row = row as i64;
 
@@ -368,7 +389,7 @@ impl BlockCode {
                                 self.block_size * 0.4,
                                 -1,
                                 self.style.border_clr,
-                                pos.x + x,
+                                pos.x + x + 1.0,
                                 pos.y + row + y - 1.0,
                                 (block_w * 0.5).floor(),
                                 block_h,
@@ -408,7 +429,7 @@ impl BlockCode {
                                 self.block_size * 0.4,
                                 1,
                                 self.style.border_clr,
-                                (pos.x + x + (block_w * 0.5)).floor(),
+                                (pos.x + x + (block_w * 0.5) - 1.0).floor(),
                                 pos.y + row + y - 1.0,
                                 (block_w * 0.5).floor(),
                                 block_h,
@@ -531,7 +552,13 @@ impl BlockCode {
         p.reset_clip_region();
     }
 
-    fn find_area_at(&self, x: f32, y: f32) -> Option<(usize, i64, i64, usize)> {
+    fn find_area_at_mouse(&self, x: f32, y: f32) -> Option<(usize, i64, i64, usize)> {
+        let shift_x = (self.shift_offs.0 + self.tmp_shift_offs.map(|o| o.0).unwrap_or(0.0)).round();
+        let shift_y = (self.shift_offs.1 + self.tmp_shift_offs.map(|o| o.1).unwrap_or(0.0)).round();
+
+        let x = x - shift_x;
+        let y = y - shift_y;
+
         let block_h = self.block_size;
         let block_w = block_h * 2.0;
 
@@ -539,29 +566,31 @@ impl BlockCode {
             for a in lvl.iter() {
                 let (id, pos) = *a;
 
-                if pos.is_inside(x, y) {
-                    let xo = x - pos.x;
-                    let yo = y - pos.y;
-                    let xi = (xo / block_w).floor() as i64;
-                    let yi = (yo / block_h).floor() as i64;
-
-                    let sub_col =
-                        if (xo - xi as f32 * block_w) > (block_w * 0.5) {
-                            1
-                        } else {
-                            0
-                        };
-
-                    return Some((a.0, xi, yi, sub_col));
+                if id > 0 && !pos.is_inside(x, y) {
+                    continue;
                 }
+
+                let xo = x - pos.x;
+                let yo = y - pos.y;
+                let xi = (xo / block_w).floor() as i64;
+                let yi = (yo / block_h).floor() as i64;
+
+                let sub_col =
+                    if (xo - xi as f32 * block_w) > (block_w * 0.5) {
+                        1
+                    } else {
+                        0
+                    };
+
+                return Some((a.0, xi, yi, sub_col));
             }
         }
 
         None
     }
 
-    fn find_pos_at(&self, x: f32, y: f32) -> Option<BlockPos> {
-        if let Some((area, x, y, subcol)) = self.find_area_at(x, y) {
+    fn find_pos_at_mouse(&self, x: f32, y: f32) -> Option<BlockPos> {
+        if let Some((area, x, y, subcol)) = self.find_area_at_mouse(x, y) {
             if let Some((ox, oy)) =
                 self.code.borrow().origin_at(area, x, y)
             {
@@ -651,54 +680,82 @@ impl Widget for BlockCode {
 
         if let Some(window_event) = event.message.downcast::<WindowEvent>() {
             match window_event {
-                WindowEvent::MouseDown(_) => {
+                WindowEvent::MouseDown(btn) => {
                     let (x, y) = (state.mouse.cursorx, state.mouse.cursory);
-                    self.m_down = self.find_pos_at(x, y);
+
+                    if *btn != MouseButton::Middle {
+                        self.m_down = self.find_pos_at_mouse(x, y);
+
+                        state.insert_event(
+                            Event::new(WindowEvent::Redraw)
+                                .target(Entity::root()));
+                    }
 
                     state.capture(entity);
-                    state.insert_event(
-                        Event::new(WindowEvent::Redraw)
-                            .target(Entity::root()));
                 },
                 WindowEvent::MouseUp(btn) => {
                     let (x, y) = (state.mouse.cursorx, state.mouse.cursory);
 
-                    let m_up = self.find_pos_at(x, y);
-                    if m_up == self.m_down {
-                        if let Some(pos) = m_up {
-                            if let Some(cb) = self.on_click.take() {
-                                (*cb)(self, state, entity, pos, *btn);
-                                self.on_click = Some(cb);
-                            }
+                    if *btn == MouseButton::Middle {
+                        if let Some(tmp_shift_offs) = self.tmp_shift_offs.take() {
+                            self.shift_offs.0 += tmp_shift_offs.0;
+                            self.shift_offs.1 += tmp_shift_offs.1;
                         }
-                    } else {
-                        if let (Some(down_pos), Some(up_pos)) =
-                            (self.m_down, m_up)
-                        {
-                            if let Some(cb) = self.on_drag.take() {
-                                (*cb)(self, state, entity, down_pos, up_pos, *btn);
-                                self.on_drag = Some(cb);
-                            }
-                        }
-                    }
 
-                    self.m_down = None;
-
-                    state.release(entity);
-                    state.insert_event(
-                        Event::new(WindowEvent::Redraw)
-                            .target(Entity::root()));
-                },
-                WindowEvent::MouseMove(x, y) => {
-                    let old_hover = self.hover;
-                    let mut found = false;
-
-                    self.hover = self.find_area_at(*x, *y);
-
-                    if old_hover != self.hover {
                         state.insert_event(
                             Event::new(WindowEvent::Redraw)
                                 .target(Entity::root()));
+                    } else {
+                        let m_up = self.find_pos_at_mouse(x, y);
+
+                        if m_up == self.m_down {
+                            if let Some(pos) = m_up {
+                                if let Some(cb) = self.on_click.take() {
+                                    (*cb)(self, state, entity, pos, *btn);
+                                    self.on_click = Some(cb);
+                                }
+                            }
+                        } else {
+                            if let (Some(down_pos), Some(up_pos)) =
+                                (self.m_down, m_up)
+                            {
+                                if let Some(cb) = self.on_drag.take() {
+                                    (*cb)(self, state, entity, down_pos, up_pos, *btn);
+                                    self.on_drag = Some(cb);
+                                }
+                            }
+                        }
+
+                        state.insert_event(
+                            Event::new(WindowEvent::Redraw)
+                                .target(Entity::root()));
+                    }
+
+                    state.release(entity);
+                    self.m_down = None;
+                },
+                WindowEvent::MouseMove(x, y) => {
+                    if state.mouse.middle.state == MouseButtonState::Pressed {
+                        self.tmp_shift_offs =
+                            Some((
+                                *x - state.mouse.middle.pos_down.0,
+                                *y - state.mouse.middle.pos_down.1
+                            ));
+
+                        state.insert_event(
+                            Event::new(WindowEvent::Redraw)
+                                .target(Entity::root()));
+                    } else {
+                        let old_hover = self.hover;
+                        let mut found = false;
+
+                        self.hover = self.find_area_at_mouse(*x, *y);
+
+                        if old_hover != self.hover {
+                            state.insert_event(
+                                Event::new(WindowEvent::Redraw)
+                                    .target(Entity::root()));
+                        }
                     }
                 },
                 _ => {},

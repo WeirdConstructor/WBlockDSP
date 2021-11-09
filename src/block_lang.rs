@@ -65,11 +65,11 @@ impl Block {
 
     /// Calls `f` for every output port that is available.
     /// `f` gets passed the row index.
-    pub fn for_output_ports<F: FnMut(usize)>(&self, mut f: F) {
+    pub fn for_output_ports<F: FnMut(usize, &str)>(&self, mut f: F) {
         for i in 0..self.rows {
-            if let Some(o) = self.outputs.get(i) {
-                if o.is_some() {
-                    f(i);
+            if let Some(p) = self.outputs.get(i) {
+                if let Some(p) = p {
+                    f(i, p);
                 }
             }
         }
@@ -92,11 +92,11 @@ impl Block {
 
     /// Calls `f` for every input port that is available.
     /// `f` gets passed the row index.
-    pub fn for_input_ports<F: FnMut(usize)>(&self, mut f: F) {
+    pub fn for_input_ports<F: FnMut(usize, &str)>(&self, mut f: F) {
         for i in 0..self.rows {
-            if let Some(o) = self.inputs.get(i) {
-                if o.is_some() {
-                    f(i);
+            if let Some(p) = self.inputs.get(i) {
+                if let Some(p) = p {
+                    f(i, p);
                 }
             }
         }
@@ -104,12 +104,12 @@ impl Block {
 
     /// Calls `f` for every input port that is available.
     /// `f` gets passed the row index.
-    pub fn for_input_ports_reverse<F: FnMut(usize)>(&self, mut f: F) {
+    pub fn for_input_ports_reverse<F: FnMut(usize, &str)>(&self, mut f: F) {
         for i in 1..=self.rows {
             let i = self.rows - i;
-            if let Some(o) = self.inputs.get(i) {
-                if o.is_some() {
-                    f(i);
+            if let Some(p) = self.inputs.get(i) {
+                if let Some(p) = p {
+                    f(i, p);
                 }
             }
         }
@@ -239,7 +239,7 @@ impl BlockChain {
         let mut output_points = vec![];
         for (block, x, y) in &self.load {
             if *x == x_split {
-                block.for_output_ports(|row| {
+                block.for_output_ports(|row, _| {
                     output_points.push(y + (row as i64));
                 });
             }
@@ -249,7 +249,7 @@ impl BlockChain {
 
         for (block, x, y) in &self.load {
             if *x == (x_split + 1) {
-                block.for_input_ports(|row| {
+                block.for_input_ports(|row, _| {
                     if output_points.iter()
                         .find(|&&out_y| out_y == (y + (row as i64)))
                         .is_some()
@@ -450,12 +450,12 @@ impl BlockArea {
                 let mut has_input  = false;
                 let mut has_output = false;
 
-                block.for_input_ports(|idx| {
+                block.for_input_ports(|idx, _| {
                     check_port_conns.push((xo - 1, yo + (idx as i64), true));
                     has_input = true;
                 });
 
-                block.for_output_ports(|idx| {
+                block.for_output_ports(|idx, _| {
                     check_port_conns.push((xo + 1, yo + (idx as i64), false));
                     has_output = true;
                 });
@@ -498,7 +498,7 @@ impl BlockArea {
         for ((x, y), block) in &self.blocks {
             let (x, y) = (*x, *y);
 
-            block.for_output_ports(|row| {
+            block.for_output_ports(|row, _| {
                 let y = y + (row as i64);
 
                 if self.find_port_at(x + 1, y, false).is_none() {
@@ -548,7 +548,7 @@ impl BlockArea {
                 sinks_out.push((*x, *y, None));
 
             } else {
-                block.for_output_ports(|row| {
+                block.for_output_ports(|row, _| {
                     if self.find_port_at(
                         *x + 1, *y + (row as i64), false).is_none()
                     {
@@ -791,7 +791,10 @@ impl BlockLanguage {
 
 pub trait BlockASTNode : std::fmt::Debug + Clone {
     fn from(typ: &str, lbl: &str) -> Self;
-    fn add_node(&self, out_port: String, node: Self);
+    fn add_node(&self, in_port: String, out_port: String, node: Self);
+    fn add_structural_node(&self, node: Self) {
+        self.add_node("".to_string(), "".to_string(), node);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -813,8 +816,8 @@ pub struct BlockFun {
 
 #[derive(Debug)]
 enum GenTreeJob<N: BlockASTNode> {
-    Node   { node: N, out_name: String,      out: N },
-    Output { area_id: usize, x: i64, y: i64, out: N },
+    Node   { node: N, out: N },
+    Output { area_id: usize, x: i64, y: i64, in_port: String, out: N },
     Sink   { area_id: usize, x: i64, y: i64, out: N },
     Area   { area_id: usize,                 out: N },
 }
@@ -873,40 +876,6 @@ impl BlockFun {
             out:        main_node.clone()
         });
 
-//        for (x, y, uncon_out_row) in main_sinks {
-//            if let Some(row) = uncon_out_row {
-//                let mut result_node = Node::from("<result>", "");
-//                main_node.add_
-//                // FIXME: We need a phantom block here that is executed
-//                //        on behalf of the Output Block!
-//                //        And we need to execute it in the correct order
-//                //        relative to the rest of the areas sinks!
-//                tree_builder.push((0, Some((x, y)), main_node));
-//            } else {
-//                tree_builder.push((0, Some((x, y)), main_node));
-//            }
-//
-//            cont_area_id, None, node.clone()));
-//            main_node.add_node("".to_string(), node.clone());
-//
-//            if let Some((block, x, y)) = main_area.ref_at_origin(x, y) {
-//                let node = Node::from(&block.typ, &block.lbl);
-//
-//                if let Some(cont_area_id) = block.contains.1 {
-//                    tree_builder.push((cont_area_id, None, node.clone()));
-//                }
-//
-//                if let Some(cont_area_id) = block.contains.0 {
-//                    tree_builder.push((cont_area_id, None, node.clone()));
-//                }
-//
-//                block.for_input_ports_reverse(|row| {
-//                    tree_builder.push(
-//                        (0, Some((x - 1, y + (row as i64))), node.clone()));
-//                });
-//            }
-//        }
-
         // A HashMap to store those blocks, that have multiple outputs.
         // Their AST nodes need to be shared to multiple parent nodes.
         let mut multi_outs : HashMap<(usize, i64, i64), Node>
@@ -923,20 +892,21 @@ impl BlockFun {
                     let sinks = area.collect_sinks();
 
                     let mut area_node = Node::from("<a>", "");
-                    out.add_node("".to_string(), area_node.clone());
+                    out.add_structural_node(area_node.clone());
 
                     for (x, y, uncon_out_row) in sinks {
                         if let Some(row) = uncon_out_row {
                             let mut result_node = Node::from("<res>", "");
 
                             tree_builder.push(GenTreeJob::<Node>::Output {
-                                area_id, x, y, out: result_node.clone(),
+                                area_id, x, y,
+                                in_port: "".to_string(),
+                                out: result_node.clone(),
                             });
 
                             tree_builder.push(GenTreeJob::<Node>::Node {
-                                node:       result_node,
-                                out_name:   "".to_string(),
-                                out:        area_node.clone(),
+                                node: result_node,
+                                out:  area_node.clone(),
                             });
                         } else {
                             tree_builder.push(GenTreeJob::<Node>::Sink {
@@ -945,8 +915,8 @@ impl BlockFun {
                         }
                     }
                 },
-                GenTreeJob::<Node>::Node { node, out_name, out } => {
-                    out.add_node(out_name, node);
+                GenTreeJob::<Node>::Node { node, out } => {
+                    out.add_structural_node(node);
                 },
                 GenTreeJob::<Node>::Sink { area_id, x, y, out } => {
                     let area =
@@ -954,40 +924,45 @@ impl BlockFun {
                             .ok_or(BlockDSPError::UnknownArea(area_id))?;
 
                     if let Some((block, xo, yo)) = area.ref_at_origin(x, y) {
-                        let node =
+                        let (node, needs_init) =
                             if let Some(node) = multi_outs.get(&(area_id, xo, yo)) {
-                                node.clone()
+                                (node.clone(), false)
                             } else {
-                                Node::from(&block.typ, &block.lbl)
+                                (Node::from(&block.typ, &block.lbl), true)
                             };
 
-                        out.add_node("".to_string(), node.clone());
+                        out.add_structural_node(node.clone());
 
-                        if let Some(cont_area_id) = block.contains.1 {
-                            tree_builder.push(GenTreeJob::<Node>::Area {
-                                area_id:    cont_area_id,
-                                out:        node.clone()
+                        if needs_init {
+                            multi_outs.insert((area_id, xo, yo), node.clone());
+
+                            if let Some(cont_area_id) = block.contains.1 {
+                                tree_builder.push(GenTreeJob::<Node>::Area {
+                                    area_id:    cont_area_id,
+                                    out:        node.clone()
+                                });
+                            }
+
+                            if let Some(cont_area_id) = block.contains.0 {
+                                tree_builder.push(GenTreeJob::<Node>::Area {
+                                    area_id:    cont_area_id,
+                                    out:        node.clone()
+                                });
+                            }
+
+                            block.for_input_ports_reverse(|row, port_name| {
+                                tree_builder.push(GenTreeJob::<Node>::Output {
+                                    area_id,
+                                    x:       xo - 1,
+                                    y:       yo + (row as i64),
+                                    in_port: port_name.to_string(),
+                                    out:     node.clone(),
+                                });
                             });
                         }
-
-                        if let Some(cont_area_id) = block.contains.0 {
-                            tree_builder.push(GenTreeJob::<Node>::Area {
-                                area_id:    cont_area_id,
-                                out:        node.clone()
-                            });
-                        }
-
-                        block.for_input_ports_reverse(|row| {
-                            tree_builder.push(GenTreeJob::<Node>::Output {
-                                area_id,
-                                x: xo - 1,
-                                y: yo + (row as i64),
-                                out: node.clone(),
-                            });
-                        });
                     }
                 },
-                GenTreeJob::<Node>::Output { area_id, x, y, out } => {
+                GenTreeJob::<Node>::Output { area_id, x, y, in_port, out } => {
                     let area =
                         self.areas.get(area_id)
                             .ok_or(BlockDSPError::UnknownArea(area_id))?;
@@ -995,35 +970,12 @@ impl BlockFun {
                     if let Some((block, xo, yo)) = area.ref_at_origin(x, y) {
                         let row = y - yo;
 
-                        let node =
+                        let (node, needs_init) =
                             if let Some(node) = multi_outs.get(&(area_id, xo, yo)) {
-                                node.clone()
+                                (node.clone(), false)
                             } else {
-                                Node::from(&block.typ, &block.lbl)
+                                (Node::from(&block.typ, &block.lbl), true)
                             };
-
-                        if let Some(cont_area_id) = block.contains.1 {
-                            tree_builder.push(GenTreeJob::<Node>::Area {
-                                area_id:    cont_area_id,
-                                out:        node.clone()
-                            });
-                        }
-
-                        if let Some(cont_area_id) = block.contains.0 {
-                            tree_builder.push(GenTreeJob::<Node>::Area {
-                                area_id:    cont_area_id,
-                                out:        node.clone()
-                            });
-                        }
-
-                        block.for_input_ports_reverse(|row| {
-                            tree_builder.push(GenTreeJob::<Node>::Output {
-                                area_id,
-                                x: xo - 1,
-                                y: yo + (row as i64),
-                                out: node.clone(),
-                            });
-                        });
 
                         if let Some(out_name) =
                             block.outputs
@@ -1031,88 +983,47 @@ impl BlockFun {
                                 .cloned()
                                 .flatten()
                         {
-                            out.add_node(out_name, node.clone());
+                            out.add_node(in_port, out_name, node.clone());
                         }
                         else
                         {
                             let node = Node::from(&null_typ, "");
-                            out.add_node("".to_string(), node.clone());
+                            out.add_node(in_port, "".to_string(), node.clone());
+                        }
+
+                        if needs_init {
+                            multi_outs.insert((area_id, xo, yo), node.clone());
+
+                            if let Some(cont_area_id) = block.contains.1 {
+                                tree_builder.push(GenTreeJob::<Node>::Area {
+                                    area_id:    cont_area_id,
+                                    out:        node.clone()
+                                });
+                            }
+
+                            if let Some(cont_area_id) = block.contains.0 {
+                                tree_builder.push(GenTreeJob::<Node>::Area {
+                                    area_id:    cont_area_id,
+                                    out:        node.clone()
+                                });
+                            }
+
+                            block.for_input_ports_reverse(|row, port_name| {
+                                tree_builder.push(GenTreeJob::<Node>::Output {
+                                    area_id,
+                                    x:       xo - 1,
+                                    y:       yo + (row as i64),
+                                    in_port: port_name.to_string(),
+                                    out:     node.clone(),
+                                });
+                            });
                         }
                     } else {
                         let node = Node::from(&null_typ, "");
-                        out.add_node("".to_string(), node.clone());
+                        out.add_node(in_port, "".to_string(), node.clone());
                     }
                 },
             }
-//            let area =
-//                self.areas.get(id)
-//                    .ok_or(BlockDSPError::UnknownArea(id))?;
-//
-//            if let Some((x, y)) = coords {
-//                // handle a child AST node that is a [Block]
-//                if let Some((block, xo, yo)) = area.ref_at_origin(x, y) {
-//                    let row = y - yo;
-//
-//                    let node =
-//                        if let Some(node) = multi_outs.get(&(id, xo, yo)) {
-//                            node.clone()
-//                        } else {
-//                            Node::from(&block.typ, &block.lbl)
-//                        };
-//
-//                    if let Some(out_name) =
-//                        block.outputs.get(row as usize).cloned().flatten()
-//                    {
-//                        ast_node.add_node(out_name, node.clone());
-//                    }
-//
-//                    if let Some(cont_area_id) = block.contains.1 {
-//                        tree_builder.push((cont_area_id, None, node.clone()));
-//                    }
-//
-//                    if let Some(cont_area_id) = block.contains.0 {
-//                        tree_builder.push((cont_area_id, None, node.clone()));
-//                    }
-//
-//                    block.for_input_ports_reverse(|row| {
-//                        tree_builder.push((
-//                            0,
-//                            Some((xo - 1, yo + (row as i64))),
-//                            node.clone()
-//                        ));
-//                    });
-//                } else {
-//                    let node = Node::from(&null_typ, "");
-//                    ast_node.add_node("".to_string(), node.clone());
-//                }
-//
-//            } else {
-//                // handle a child AST node that is a whole area.
-//                // here the important nodes are the sinks and the bottom right most
-//                // unconnected output!
-//                let mut area_node = Node::from("<area>", "");
-//
-//                for (x, y) in area.collect_sinks() {
-//                    tree_builder.push((id, Some((x, y)), area_node));
-//                }
-//                // FIXME: This stuff is probably handled by the part that
-//                //        handles collect_sinks!
-//
-////                let mut result_node = Node::from("<result>", "");
-////
-////                if let Some((x, y, out)) = area.find_last_unconnected_output() {
-////                    tree_builder.push((id, Some((x, y)), result_node));
-////                } else {
-////                    let node = Node::from(&null_typ, "");
-////                    result_node.add_node("".to_string(), node.clone());
-////                }
-////
-////                ast_node.add_node("".to_string(), 
-////
-////                if let Some((
-////                tree_builder.push((id, Some((x, y)), area_node));
-//
-//            }
         }
 
         Ok(main_node)

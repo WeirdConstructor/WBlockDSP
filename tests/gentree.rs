@@ -5,36 +5,46 @@ use std::cell::RefCell;
 
 #[derive(Debug)]
 pub struct DebugASTNode {
+    pub idx:   i64,
     pub typ:   String,
     pub lbl:   String,
-    pub nodes: Vec<(String, DebugASTNodeRef)>,
+    pub nodes: Vec<(String, String, DebugASTNodeRef)>,
 }
 
 #[derive(Debug, Clone)]
 pub struct DebugASTNodeRef(Rc<RefCell<DebugASTNode>>);
 
 impl DebugASTNodeRef {
-    pub fn walk_dump(&self, output: &str) -> String {
+    pub fn walk_dump(&self, input: &str, output: &str) -> String {
+        let idx =
+            if self.0.borrow().idx >= 0 { format!("{}#", self.0.borrow().idx) }
+            else { "".to_string() };
+        let inport =
+            if input.len() > 0 { format!("(in:{})", input) }
+            else { "".to_string() };
+
         let mut s =
             if self.0.borrow().lbl.len() == 0 {
                 if output.len() > 0 {
-                    format!("{}(out:{})", self.0.borrow().typ, output)
+                    format!("{}(out:{}){}", self.0.borrow().typ, output, inport)
                 } else {
-                    format!("{}", self.0.borrow().typ)
+                    format!("{}{}", self.0.borrow().typ, inport)
                 }
             } else {
                 if output.len() > 0 {
                     format!(
-                        "{}:{}(out:{})",
+                        "{}:{}(out:{}){}",
                         self.0.borrow().typ, self.0.borrow().lbl,
-                        output)
+                        output, inport)
                 } else {
-                    format!("{}:{}", self.0.borrow().typ, self.0.borrow().lbl)
+                    format!("{}:{}{}", self.0.borrow().typ, self.0.borrow().lbl, inport)
                 }
             };
 
+        s = idx + &s;
+
         let mut first = true;
-        for (out, n) in &self.0.borrow().nodes {
+        for (inp, out, n) in &self.0.borrow().nodes {
             if first {
                 s += "[";
             } else {
@@ -42,7 +52,7 @@ impl DebugASTNodeRef {
             }
             first = false;
 
-            s += &n.walk_dump(&out);
+            s += &n.walk_dump(&inp, &out);
         }
 
         if !first {
@@ -53,23 +63,45 @@ impl DebugASTNodeRef {
     }
 }
 
+thread_local! {
+    pub static NODE_ID: RefCell<i64> = RefCell::new(-1);
+}
+
+pub fn set_node_id_on() {
+    NODE_ID.with(|idx| { *idx.borrow_mut() = 0; });
+}
+
+pub fn set_node_id_off() {
+    NODE_ID.with(|idx| { *idx.borrow_mut() = -1; });
+}
+
 impl BlockASTNode for DebugASTNodeRef {
     fn from(typ: &str, lbl: &str) -> DebugASTNodeRef {
+        let idx = NODE_ID.with(|idx| {
+            if *idx.borrow_mut() >= 0 {
+                *idx.borrow_mut() += 1;
+                *idx.borrow() - 1
+            } else {
+                -1
+            }
+        });
+
         DebugASTNodeRef(Rc::new(RefCell::new(DebugASTNode {
+            idx,
             typ:    typ.to_string(),
             lbl:    lbl.to_string(),
             nodes:  vec![],
         })))
     }
 
-    fn add_node(&self, out_port: String, node: DebugASTNodeRef) {
-        self.0.borrow_mut().nodes.push((out_port, node));
+    fn add_node(&self, in_port: String, out_port: String, node: DebugASTNodeRef) {
+        self.0.borrow_mut().nodes.push((in_port, out_port, node));
     }
 }
 
 pub fn gen_code(code: &mut BlockFun) -> String {
     let mut tree = code.generate_tree::<DebugASTNodeRef>("zero").unwrap();
-    tree.walk_dump("")
+    tree.walk_dump("", "")
 }
 
 fn prepare(blocks: &[(usize, i64, i64, &str, Option<&str>)]) -> Rc<RefCell<BlockFun>> {
@@ -174,6 +206,18 @@ fn prepare(blocks: &[(usize, i64, i64, &str, Option<&str>)]) -> Rc<RefCell<Block
     });
 
     lang.borrow_mut().define(BlockType {
+        category:       "nodes".to_string(),
+        name:           "1pole".to_string(),
+        rows:           2,
+        inputs:         vec![Some("in".to_string()), Some("f".to_string())],
+        outputs:        vec![Some("lp".to_string()), Some("hp".to_string())],
+        area_count:     0,
+        user_input:     false,
+        description:    "Runs a simple one pole filter on the input".to_string(),
+        color:          8,
+    });
+
+    lang.borrow_mut().define(BlockType {
         category:       "functions".to_string(),
         name:           "sin".to_string(),
         rows:           1,
@@ -223,6 +267,17 @@ fn prepare(blocks: &[(usize, i64, i64, &str, Option<&str>)]) -> Rc<RefCell<Block
 fn gen(blocks: &[(usize, i64, i64, &str, Option<&str>)]) -> String {
     let code = prepare(blocks);
     let mut bcode = code.borrow_mut();
+    gen_code(&mut bcode)
+}
+
+fn gen_do<F: Fn(&mut BlockFun)>(
+    blocks: &[(usize, i64, i64, &str, Option<&str>)],
+    f: F
+) -> String
+{
+    let code = prepare(blocks);
+    let mut bcode = code.borrow_mut();
+    f(&mut bcode);
     gen_code(&mut bcode)
 }
 
@@ -302,7 +357,36 @@ fn check_named_inputs() {
             (0, 3, 3, "-", None),
             (0, 4, 3, "set", Some("o")),
         ]),
-        "<r>[<a>[set:o[-:-[number:0.4@a,zero@b]]]]");
+        "<r>[<a>[set:o[-:-[number:0.4(in:a),zero(in:b)]]]]");
+
+    assert_eq!(
+        gen_do(&[
+            (0, 2, 3, "number", Some("0.4")),
+            (0, 3, 3, "-", None),
+            (0, 4, 3, "set", Some("o")),
+        ], |fun| fun.shift_port(0, 3, 3, 0, false)),
+        "<r>[<a>[set:o[-:-[number:0.4(in:b),zero(in:a)]]]]");
+}
+
+#[test]
+fn check_shared_ast_nodes() {
+    set_node_id_on();
+    assert_eq!(
+        gen(&[
+            (0, 1, 3, "get", Some("sig")),
+            (0, 1, 4, "get", Some("freq")),
+            (0, 2, 3, "1pole", None),
+            (0, 3, 3, "set", Some("lpv")),
+            (0, 3, 4, "set", Some("hpv")),
+        ]),
+        "0#<r>[1#<a>[\
+            2#set:lpv[\
+                3#1pole:1pole(out:lp)[\
+                    4#get:sig(in:in),5#get:freq(in:f)]],\
+            6#set:hpv[\
+                3#1pole:1pole(out:hp)[\
+                    4#get:sig(in:in),5#get:freq(in:f)]]]]");
+    set_node_id_off();
 }
 
 #[test]
