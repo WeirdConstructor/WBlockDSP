@@ -4,8 +4,12 @@ use tuix::widgets::*;
 mod painter;
 mod rect;
 mod block_code;
+mod block_code_style;
+mod wichtext;
 
+use block_code_style::*;
 use block_code::*;
+use wichtext::*;
 
 use wblockdsp::{BlockFun, BlockLanguage, BlockType, BlockASTNode};
 
@@ -299,7 +303,8 @@ pub fn main() {
             |state, window| {
                 let style = BlockCodeStyle::new_default();
 
-                let col = Column::new().build(state, window.entity(), |builder| builder);
+                let row = Row::new().build(state, window.entity(), |builder| builder);
+                let col = Column::new().build(state, row, |builder| builder);
 
                 let pop = Popup::new().build(state, window.entity(), |builder| {
                     builder
@@ -491,7 +496,7 @@ pub fn main() {
                 pop.set_background_color(state, Color::white());
 
                 let bc =
-                    BlockCode::new(style)
+                    BlockCode::new(style.clone())
                         .on_click({
                             let code = code.clone();
                             move |_, state, e, pos, btn| {
@@ -572,11 +577,22 @@ pub fn main() {
                         })
                         .build(state, col, |builder| { builder });
 
+                let wt =
+                    WichText::new(style)
+                        .build(state, row, |builder| { builder });
+
                 state.add_theme(STYLE);
 
                 state.insert_event(
                     Event::new(BlockCodeMessage::SetCode(code))
                     .target(bc));
+                state.insert_event(
+                    Event::new(
+                        WichTextMessage::SetText(
+                            "foo[c2:Blabla[foo]]bar]and\n\
+                             next line!\n     Some [c4:Other Rich]text format!!!\n\
+                             |>    [c12:????][c17:Colors!] :-)".to_string()))
+                    .target(wt));
             });
     app.run();
 }

@@ -4,6 +4,7 @@
 
 use crate::painter::*;
 use crate::rect::*;
+use crate::block_code_style::*;
 use wblockdsp::{BlockView, BlockCodeView};
 
 use tuix::*;
@@ -33,66 +34,6 @@ impl BlockCodeView for DummyBlockCode {
 
     fn origin_at(&self, id: usize, x: i64, y: i64) -> Option<(i64, i64)> {
         None
-    }
-}
-
-macro_rules! hxclr {
-    ($i: expr) => {
-        (
-            ($i >> 16 & 0xFF) as f32 / 255.0,
-            ($i >> 8  & 0xFF) as f32 / 255.0,
-            ($i       & 0xFF) as f32 / 255.0,
-        )
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct BlockCodeStyle {
-    bg_clr:             (f32, f32, f32), // UI_ACCENT_BG1_CLR
-    block_bg_hover_clr: (f32, f32, f32), // UI_ACCENT_CLR
-    block_bg_clr:       (f32, f32, f32), // UI_ACCENT_BG2_CLR
-    border_hover_clr:   (f32, f32, f32), // UI_HLIGHT_CLR
-    border_clr:         (f32, f32, f32), // UI_PRIM_CLR
-    port_select_clr:    (f32, f32, f32), // UI_SELECT_CLR
-    grid_marker_clr:    (f32, f32, f32), // UI_ACCENT_DARK_CLR
-    with_markers:       bool,
-    block_clrs:         Vec<(f32, f32, f32)>,
-}
-
-impl BlockCodeStyle {
-    pub fn new_default() -> Self {
-        let block_clrs = vec![
-            hxclr!(0x922f93), // 0
-            hxclr!(0x862b37),
-            hxclr!(0xb45745),
-            hxclr!(0x835933),
-            hxclr!(0xa69b64),
-            hxclr!(0xbec8a6),
-            hxclr!(0x346c38), // 6
-            hxclr!(0x1fb349),
-            hxclr!(0x4cdb80),
-            hxclr!(0x59bca3),
-            hxclr!(0x228f9d),
-            hxclr!(0x03b5e7),
-            hxclr!(0x3b5eca), // 12
-            hxclr!(0x594fa1),
-            hxclr!(0xc2b2eb),
-            hxclr!(0xac70fa),
-            hxclr!(0x9850a9),
-            hxclr!(0xdc4fc1), // 17
-        ];
-
-        Self {
-            bg_clr:             hxclr!(0x111920),
-            block_bg_hover_clr: hxclr!(0x922f93),
-            block_bg_clr:       hxclr!(0x192129),
-            border_hover_clr:   hxclr!(0xecf9ce),
-            border_clr:         hxclr!(0x03fdcb),
-            port_select_clr:    hxclr!(0xd73988),
-            grid_marker_clr:    hxclr!(0x1e333d),
-            with_markers:       false,
-            block_clrs,
-        }
     }
 }
 
@@ -145,7 +86,6 @@ impl BlockPos {
 }
 
 pub struct BlockCode {
-    font_size:      f32,
     font:           Option<FontId>,
     font_mono:      Option<FontId>,
     code:           Rc<RefCell<dyn BlockCodeView>>,
@@ -170,7 +110,6 @@ pub struct BlockCode {
 impl BlockCode {
     pub fn new(style: BlockCodeStyle) -> Self {
         Self {
-            font_size:      14.0,
             font:           None,
             font_mono:      None,
             code:           Rc::new(RefCell::new(DummyBlockCode::new())),
