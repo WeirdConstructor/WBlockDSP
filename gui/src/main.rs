@@ -52,6 +52,7 @@ fn spawn_button<F: 'static + Fn(&mut State, BlockPos)>(
 
 #[derive(Debug)]
 pub struct ASTNode {
+    pub id:    usize,
     pub typ:   String,
     pub lbl:   String,
     pub nodes: Vec<(String, String, ASTNodeRef)>,
@@ -72,9 +73,9 @@ impl ASTNodeRef {
             else { "".to_string() };
 
         println!(
-            "{}{}[{}] {}{}",
-            indent_str, self.0.borrow().typ, self.0.borrow().lbl,
-            out_port, in_port);
+            "{}{}#{}[{}] {}{}",
+            indent_str, self.0.borrow().id, self.0.borrow().typ,
+            self.0.borrow().lbl, out_port, in_port);
 
         for (inp, out, n) in &self.0.borrow().nodes {
             n.walk_dump(&inp, &out, indent + 1);
@@ -83,8 +84,9 @@ impl ASTNodeRef {
 }
 
 impl BlockASTNode for ASTNodeRef {
-    fn from(typ: &str, lbl: &str) -> ASTNodeRef {
+    fn from(id: usize, typ: &str, lbl: &str) -> ASTNodeRef {
         ASTNodeRef(Rc::new(RefCell::new(ASTNode {
+            id,
             typ:    typ.to_string(),
             lbl:    lbl.to_string(),
             nodes:  vec![],

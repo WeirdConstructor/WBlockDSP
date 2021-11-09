@@ -5,7 +5,7 @@ use std::cell::RefCell;
 
 #[derive(Debug)]
 pub struct DebugASTNode {
-    pub idx:   i64,
+    pub id:    usize,
     pub typ:   String,
     pub lbl:   String,
     pub nodes: Vec<(String, String, DebugASTNodeRef)>,
@@ -15,9 +15,9 @@ pub struct DebugASTNode {
 pub struct DebugASTNodeRef(Rc<RefCell<DebugASTNode>>);
 
 impl DebugASTNodeRef {
-    pub fn walk_dump(&self, input: &str, output: &str) -> String {
-        let idx =
-            if self.0.borrow().idx >= 0 { format!("{}#", self.0.borrow().idx) }
+    pub fn walk_dump(&self, input: &str, output: &str, with_ids: bool) -> String {
+        let id =
+            if with_ids && self.0.borrow().id > 0 { format!("{}#", self.0.borrow().id) }
             else { "".to_string() };
         let inport =
             if input.len() > 0 { format!("(in:{})", input) }
@@ -41,7 +41,7 @@ impl DebugASTNodeRef {
                 }
             };
 
-        s = idx + &s;
+        s = id + &s;
 
         let mut first = true;
         for (inp, out, n) in &self.0.borrow().nodes {
@@ -52,7 +52,7 @@ impl DebugASTNodeRef {
             }
             first = false;
 
-            s += &n.walk_dump(&inp, &out);
+            s += &n.walk_dump(&inp, &out, with_ids);
         }
 
         if !first {
@@ -63,31 +63,10 @@ impl DebugASTNodeRef {
     }
 }
 
-thread_local! {
-    pub static NODE_ID: RefCell<i64> = RefCell::new(-1);
-}
-
-pub fn set_node_id_on() {
-    NODE_ID.with(|idx| { *idx.borrow_mut() = 0; });
-}
-
-pub fn set_node_id_off() {
-    NODE_ID.with(|idx| { *idx.borrow_mut() = -1; });
-}
-
 impl BlockASTNode for DebugASTNodeRef {
-    fn from(typ: &str, lbl: &str) -> DebugASTNodeRef {
-        let idx = NODE_ID.with(|idx| {
-            if *idx.borrow_mut() >= 0 {
-                *idx.borrow_mut() += 1;
-                *idx.borrow() - 1
-            } else {
-                -1
-            }
-        });
-
+    fn from(id: usize, typ: &str, lbl: &str) -> DebugASTNodeRef {
         DebugASTNodeRef(Rc::new(RefCell::new(DebugASTNode {
-            idx,
+            id,
             typ:    typ.to_string(),
             lbl:    lbl.to_string(),
             nodes:  vec![],
@@ -99,9 +78,9 @@ impl BlockASTNode for DebugASTNodeRef {
     }
 }
 
-pub fn gen_code(code: &mut BlockFun) -> String {
+pub fn gen_code(code: &mut BlockFun, with_ids: bool) -> String {
     let mut tree = code.generate_tree::<DebugASTNodeRef>("zero").unwrap();
-    tree.walk_dump("", "")
+    tree.walk_dump("", "", with_ids)
 }
 
 fn prepare(blocks: &[(usize, i64, i64, &str, Option<&str>)]) -> Rc<RefCell<BlockFun>> {
@@ -267,7 +246,13 @@ fn prepare(blocks: &[(usize, i64, i64, &str, Option<&str>)]) -> Rc<RefCell<Block
 fn gen(blocks: &[(usize, i64, i64, &str, Option<&str>)]) -> String {
     let code = prepare(blocks);
     let mut bcode = code.borrow_mut();
-    gen_code(&mut bcode)
+    gen_code(&mut bcode, false)
+}
+
+fn gen_with_ids(blocks: &[(usize, i64, i64, &str, Option<&str>)]) -> String {
+    let code = prepare(blocks);
+    let mut bcode = code.borrow_mut();
+    gen_code(&mut bcode, true)
 }
 
 fn gen_do<F: Fn(&mut BlockFun)>(
@@ -278,7 +263,18 @@ fn gen_do<F: Fn(&mut BlockFun)>(
     let code = prepare(blocks);
     let mut bcode = code.borrow_mut();
     f(&mut bcode);
-    gen_code(&mut bcode)
+    gen_code(&mut bcode, false)
+}
+
+fn gen_do_with_ids<F: Fn(&mut BlockFun)>(
+    blocks: &[(usize, i64, i64, &str, Option<&str>)],
+    f: F
+) -> String
+{
+    let code = prepare(blocks);
+    let mut bcode = code.borrow_mut();
+    f(&mut bcode);
+    gen_code(&mut bcode, true)
 }
 
 #[test]
@@ -369,24 +365,31 @@ fn check_named_inputs() {
 }
 
 #[test]
-fn check_shared_ast_nodes() {
-    set_node_id_on();
+fn check_clone_ids() {
     assert_eq!(
-        gen(&[
+        gen_do_with_ids(&[
+            (0, 2, 3, "number", Some("0.4")),
+        ], |fun| { fun.clone_block_from_to(0, 2, 3, 0, 3, 3).unwrap(); }),
+        "<r>[<a>[<res>[1#number:0.4],<res>[2#number:0.4]]]");
+}
+
+#[test]
+fn check_shared_ast_nodes() {
+    assert_eq!(
+        gen_with_ids(&[
             (0, 1, 3, "get", Some("sig")),
             (0, 1, 4, "get", Some("freq")),
             (0, 2, 3, "1pole", None),
             (0, 3, 3, "set", Some("lpv")),
             (0, 3, 4, "set", Some("hpv")),
         ]),
-        "0#<r>[1#<a>[\
-            2#set:lpv[\
+        "<r>[<a>[\
+            4#set:lpv[\
                 3#1pole:1pole(out:lp)[\
-                    4#get:sig(in:in),5#get:freq(in:f)]],\
-            6#set:hpv[\
+                    1#get:sig(in:in),2#get:freq(in:f)]],\
+            5#set:hpv[\
                 3#1pole:1pole(out:hp)[\
-                    4#get:sig(in:in),5#get:freq(in:f)]]]]");
-    set_node_id_off();
+                    1#get:sig(in:in),2#get:freq(in:f)]]]]");
 }
 
 #[test]

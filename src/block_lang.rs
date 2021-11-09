@@ -6,6 +6,23 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 
+#[derive(Debug, Clone)]
+pub struct BlockIDGenerator {
+    counter: Rc<RefCell<usize>>,
+}
+
+impl BlockIDGenerator {
+    pub fn new() -> Self {
+        Self { counter: Rc::new(RefCell::new(0)), }
+    }
+
+    pub fn next(&self) -> usize {
+        let mut c = self.counter.borrow_mut();
+        *c += 1;
+        *c
+    }
+}
+
 /// This structure represents a block inside the [BlockArea] of a [BlockFun].
 /// It stores everything required for calculating a node of the AST.
 ///
@@ -17,6 +34,8 @@ use std::collections::VecDeque;
 /// is specified by the `area_id`, and the `x` and `y` coordinates.
 #[derive(Debug, Clone)]
 pub struct Block {
+    /// An ID to track this block.
+    id:       usize,
     /// How many rows this block spans. A [Block] can only be 1 cell wide.
     rows:     usize,
     /// Up to two sub [BlockArea] can be specified here by their ID.
@@ -40,6 +59,20 @@ pub struct Block {
 }
 
 impl Block {
+    pub fn clone_with_new_id(&self, new_id: usize) -> Self {
+        Self {
+            id:       new_id,
+            rows:     self.rows,
+            contains: self.contains.clone(),
+            expanded: self.expanded,
+            typ:      self.typ.clone(),
+            lbl:      self.lbl.clone(),
+            inputs:   self.inputs.clone(),
+            outputs:  self.outputs.clone(),
+            color:    self.color,
+        }
+    }
+
     /// Takes the (input) port at row `idx` and pushed it one row further
     /// down, wrapping around at the end. If `output` is true, the
     /// output port at `idx` is shifted.
@@ -58,7 +91,6 @@ impl Block {
 
         let idx_from = idx;
         let idx_to   = (idx + 1) % v.len();
-        println!("{} => {} [{}]", idx_from, idx_to, v.len());
         let elem = v.remove(idx_from);
         v.insert(idx_to, elem);
     }
@@ -175,7 +207,7 @@ impl BlockView for Block {
 /// The original positions of the _loaded_ blocks is stored too.
 /// If you want to move the whole chain in the coordinate system
 /// to the upper left most corner, you can use [BlockChain::normalize_load_pos].
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct BlockChain {
     /// The area ID this BlockChain was created from.
     area_id: usize,
@@ -271,7 +303,8 @@ impl BlockChain {
 //    }
 
     pub fn split_load_after_x(
-        &mut self, x_split: i64, y_split: i64, filler: Option<&BlockType>
+        &mut self, x_split: i64, y_split: i64,
+        filler: Option<&BlockType>, id_gen: BlockIDGenerator,
     ) {
         let filler_pos : Vec<(i64, i64)> =
             self.get_connected_inputs_from_load_at_x(x_split);
@@ -285,7 +318,7 @@ impl BlockChain {
         if let Some(filler) = filler {
             for (x, y) in filler_pos {
                 if y == y_split { continue; }
-                let filler_block = filler.instanciate_block(None);
+                let filler_block = filler.instanciate_block(None, id_gen.clone());
 
                 self.load.push((filler_block, x, y));
             }
@@ -294,12 +327,15 @@ impl BlockChain {
         self.sort_load_pos();
     }
 
-    pub fn clone_load(&mut self, area: &mut BlockArea) {
+    pub fn clone_load(&mut self, area: &mut BlockArea, id_gen: BlockIDGenerator) {
         self.load.clear();
 
         for b in &self.blocks {
             if let Some((block, xo, yo)) = area.ref_at_origin(b.0, b.1) {
-                self.load.push((Box::new(block.clone()), xo, yo));
+                self.load.push((
+                    Box::new(block.clone_with_new_id(id_gen.next())),
+                    xo,
+                    yo));
             }
         }
 
@@ -746,8 +782,13 @@ impl BlockType {
             };
     }
 
-    pub fn instanciate_block(&self, user_input: Option<String>) -> Box<Block> {
+    pub fn instanciate_block(
+        &self, user_input: Option<String>,
+        id_gen: BlockIDGenerator
+    ) -> Box<Block>
+    {
         let mut block = Box::new(Block {
+            id:       id_gen.next(),
             rows:     self.rows,
             contains: (None, None),
             expanded: true,
@@ -790,7 +831,7 @@ impl BlockLanguage {
 }
 
 pub trait BlockASTNode : std::fmt::Debug + Clone {
-    fn from(typ: &str, lbl: &str) -> Self;
+    fn from(id: usize, typ: &str, lbl: &str) -> Self;
     fn add_node(&self, in_port: String, out_port: String, node: Self);
     fn add_structural_node(&self, node: Self) {
         self.add_node("".to_string(), "".to_string(), node);
@@ -812,6 +853,7 @@ pub struct BlockFun {
     areas:          Vec<Box<BlockArea>>,
     size_work_dq:   VecDeque<usize>,
     area_work_dq:   VecDeque<usize>,
+    id_gen:         BlockIDGenerator,
 }
 
 #[derive(Debug)]
@@ -829,6 +871,7 @@ impl BlockFun {
             areas:        vec![Box::new(BlockArea::new(16, 16))],
             size_work_dq: VecDeque::new(),
             area_work_dq: VecDeque::new(),
+            id_gen:       BlockIDGenerator::new(),
         }
     }
 
@@ -856,7 +899,9 @@ impl BlockFun {
         }
     }
 
-    pub fn generate_tree<Node: BlockASTNode>(&self, null_typ: &str) -> Result<Node, BlockDSPError> {
+    pub fn generate_tree<Node: BlockASTNode>(&self, null_typ: &str)
+        -> Result<Node, BlockDSPError>
+    {
         // This is a type for filling in unfilled outputs:
         let lang = self.language.borrow();
         let null_typ =
@@ -869,7 +914,7 @@ impl BlockFun {
         // Next we build the root AST node set:
         let mut tree_builder : Vec<GenTreeJob<Node>> = vec![];
 
-        let mut main_node = Node::from("<r>", "");
+        let mut main_node = Node::from(0, "<r>", "");
 
         tree_builder.push(GenTreeJob::<Node>::Area {
             area_id:    0,
@@ -891,12 +936,12 @@ impl BlockFun {
 
                     let sinks = area.collect_sinks();
 
-                    let mut area_node = Node::from("<a>", "");
+                    let mut area_node = Node::from(0, "<a>", "");
                     out.add_structural_node(area_node.clone());
 
                     for (x, y, uncon_out_row) in sinks {
                         if let Some(row) = uncon_out_row {
-                            let mut result_node = Node::from("<res>", "");
+                            let mut result_node = Node::from(0, "<res>", "");
 
                             tree_builder.push(GenTreeJob::<Node>::Output {
                                 area_id, x, y,
@@ -928,7 +973,7 @@ impl BlockFun {
                             if let Some(node) = multi_outs.get(&(area_id, xo, yo)) {
                                 (node.clone(), false)
                             } else {
-                                (Node::from(&block.typ, &block.lbl), true)
+                                (Node::from(block.id, &block.typ, &block.lbl), true)
                             };
 
                         out.add_structural_node(node.clone());
@@ -974,7 +1019,7 @@ impl BlockFun {
                             if let Some(node) = multi_outs.get(&(area_id, xo, yo)) {
                                 (node.clone(), false)
                             } else {
-                                (Node::from(&block.typ, &block.lbl), true)
+                                (Node::from(block.id, &block.typ, &block.lbl), true)
                             };
 
                         if let Some(out_name) =
@@ -987,7 +1032,7 @@ impl BlockFun {
                         }
                         else
                         {
-                            let node = Node::from(&null_typ, "");
+                            let node = Node::from(0, &null_typ, "");
                             out.add_node(in_port, "".to_string(), node.clone());
                         }
 
@@ -1019,7 +1064,7 @@ impl BlockFun {
                             });
                         }
                     } else {
-                        let node = Node::from(&null_typ, "");
+                        let node = Node::from(0, &null_typ, "");
                         out.add_node(in_port, "".to_string(), node.clone());
                     }
                 },
@@ -1159,7 +1204,7 @@ impl BlockFun {
         if remove_blocks {
             chain.remove_load(area);
         } else {
-            chain.clone_load(area);
+            chain.clone_load(area, self.id_gen.clone());
         }
 
         Some(chain)
@@ -1179,7 +1224,8 @@ impl BlockFun {
                     area.ref_mut_at_origin(x, y)
                         .ok_or(BlockDSPError::NoBlockAt(id, x, y))?;
 
-                let mut new_block = Box::new(block.clone());
+                let mut new_block =
+                    Box::new(block.clone_with_new_id(self.id_gen.next()));
                 if let Some(typ) = lang.borrow().types.get(&new_block.typ) {
                     typ.touch_contains(new_block.as_mut());
                 }
@@ -1240,7 +1286,7 @@ impl BlockFun {
                 None
             };
 
-        chain.split_load_after_x(x, y, typ);
+        chain.split_load_after_x(x, y, typ, self.id_gen.clone());
 
         if !chain.area_has_space_for_load(&mut area_clone, 0, 0) {
             return Err(BlockDSPError::NoSpaceAvailable(id, x, y, 0));
@@ -1416,7 +1462,8 @@ impl BlockFun {
                     .ok_or(
                         BlockDSPError::UnknownLanguageType(
                             typ.to_string()))?;
-            typ.instanciate_block(user_input)
+
+            typ.instanciate_block(user_input, self.id_gen.clone())
         };
 
         self.create_areas_for_block(block.as_mut());
