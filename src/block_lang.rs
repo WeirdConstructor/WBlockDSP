@@ -16,6 +16,12 @@ impl BlockIDGenerator {
         Self { counter: Rc::new(RefCell::new(0)), }
     }
 
+    pub fn new_with_id(id: usize) -> Self {
+        Self { counter: Rc::new(RefCell::new(id)), }
+    }
+
+    pub fn current(&self) -> usize { *self.counter.borrow_mut() }
+
     pub fn next(&self) -> usize {
         let mut c = self.counter.borrow_mut();
         *c += 1;
@@ -848,6 +854,12 @@ pub enum BlockDSPError {
 }
 
 #[derive(Debug, Clone)]
+pub struct BlockFunSnapshot {
+    areas:     Vec<Box<BlockArea>>,
+    cur_id:    usize,
+}
+
+#[derive(Debug, Clone)]
 pub struct BlockFun {
     language:       Rc<RefCell<BlockLanguage>>,
     areas:          Vec<Box<BlockArea>>,
@@ -897,6 +909,19 @@ impl BlockFun {
         if let Some(block) = self.block_ref_mut(id, x, y) {
             block.shift_port(row, output);
         }
+    }
+
+    pub fn save_snapshot(&self) -> BlockFunSnapshot {
+        BlockFunSnapshot {
+            areas:  self.areas.iter().cloned().collect(),
+            cur_id: self.id_gen.current(),
+        }
+    }
+
+    pub fn load_snapshot(&mut self, repr: &BlockFunSnapshot) {
+        self.areas  = repr.areas.iter().cloned().collect();
+        self.id_gen = BlockIDGenerator::new_with_id(repr.cur_id);
+        self.recalculate_area_sizes();
     }
 
     pub fn generate_tree<Node: BlockASTNode>(&self, null_typ: &str)

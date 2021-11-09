@@ -243,6 +243,13 @@ fn prepare(blocks: &[(usize, i64, i64, &str, Option<&str>)]) -> Rc<RefCell<Block
     code
 }
 
+fn exec(code: &mut BlockFun, blocks: &[(usize, i64, i64, &str, Option<&str>)]) {
+    for (id, x, y, name, lbl) in blocks {
+        code.instanciate_at(
+            *id, *x, *y, name, lbl.map(|s| s.to_string()));
+    }
+}
+
 fn gen(blocks: &[(usize, i64, i64, &str, Option<&str>)]) -> String {
     let code = prepare(blocks);
     let mut bcode = code.borrow_mut();
@@ -440,4 +447,36 @@ fn check_if() {
             (1, 2, 1, "set", Some("y")),
         ]),
         "<r>[<a>[set:&sig[if:if[sin:sin[number:33.0],<a>[set:y[number:0.3]],<a>]]]]");
+}
+
+#[test]
+fn check_snapshot() {
+    let code = prepare(&[
+        (0, 3, 3, "if", None),
+        (1, 1, 1, "number", Some("0.3")),
+        (1, 2, 1, "set", Some("y")),
+    ]);
+    let mut bcode = code.borrow_mut();
+    assert_eq!(gen_code(&mut bcode, true),
+        "<r>[<a>[<res>[1#if:if[zero,<a>[3#set:y[2#number:0.3]],<a>]]]]");
+
+    let snapshot = bcode.save_snapshot();
+    bcode.remove_at(0, 3, 3);
+
+    assert_eq!(gen_code(&mut bcode, true), "<r>[<a>]");
+    exec(&mut bcode, &[
+        (0, 3, 3, "if", None),
+        (1, 1, 1, "number", Some("0.3")),
+    ]);
+    assert_eq!(gen_code(&mut bcode, true), "<r>[<a>[<res>[4#if:if[zero,<a>,<a>]]]]");
+
+    bcode.load_snapshot(&snapshot);
+    assert_eq!(gen_code(&mut bcode, true),
+        "<r>[<a>[<res>[1#if:if[zero,<a>[3#set:y[2#number:0.3]],<a>]]]]");
+
+    exec(&mut bcode, &[
+        (0, 6, 6, "number", Some("0.1")),
+    ]);
+    assert_eq!(gen_code(&mut bcode, true),
+        "<r>[<a>[<res>[1#if:if[zero,<a>[3#set:y[2#number:0.3]],<a>]],<res>[4#number:0.1]]]");
 }
