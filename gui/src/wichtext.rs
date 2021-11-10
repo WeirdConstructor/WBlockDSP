@@ -15,6 +15,70 @@ use std::cell::RefCell;
 
 use std::collections::HashMap;
 
+pub trait WichTextValueSource {
+    fn set(&self, key: &str, v: f32);
+    fn value(&self, key: &str) -> f32;
+    fn clamp(&self, key: &str, v: f32) -> f32;
+    fn map_knob(&self, key: &str, v: f32) -> f32;
+    fn step(&self, key: &str) -> f32;
+    fn fmt(&self, key: &str, v: f32, buf: &mut [u8]) -> usize;
+}
+
+impl WichTextValueSource for RefCell<HashMap<String, (f32, f32, u8)>> {
+    fn set(&self, key: &str, new_v: f32) {
+        let mut create = false;
+
+        if let Some((v, _, _)) = self.borrow_mut().get_mut(key) {
+            *v = new_v;
+        } else {
+            create = true;
+        }
+
+        if create {
+            self.borrow_mut().insert(key.to_string(), (new_v, 0.05, 2));
+        }
+    }
+
+    fn map_knob(&self, key: &str, v: f32) -> f32 {
+        v.clamp(0.0, 1.0)
+    }
+
+    fn clamp(&self, key: &str, v: f32) -> f32 {
+        v.clamp(0.0, 1.0)
+    }
+
+    fn value(&self, key: &str) -> f32 {
+        self.borrow().get(key).map(|v| v.0).unwrap_or(0.0)
+    }
+
+    fn step(&self, key: &str) -> f32 {
+        self.borrow().get(key).map(|v| v.1).unwrap_or(0.05)
+    }
+
+    fn fmt(&self, key: &str, v: f32, buf: &mut [u8]) -> usize {
+        use std::io::Write;
+        let mut bw = std::io::BufWriter::new(buf);
+
+        let prec =
+            if let Some((_, _, prec)) = self.borrow().get(key) {
+                *prec
+            } else { 2 };
+
+        match (match prec {
+            0 => write!(bw, "{:5.0}", v),
+            1 => write!(bw, "{:5.1}", v),
+            2 => write!(bw, "{:5.2}", v),
+            3 => write!(bw, "{:5.3}", v),
+            4 => write!(bw, "{:6.4}", v),
+            5 => write!(bw, "{:7.5}", v),
+            _ => write!(bw, "{:8.6}", v),
+        }) {
+            Ok(_) => bw.buffer().len(),
+            _     => 0,
+        }
+    }
+}
+
 pub trait WichTextDataSource {
     fn samples(&self) -> usize;
     fn sample(&self, i: usize) -> f32;
@@ -34,6 +98,7 @@ impl WichTextDataSource for Rc<RefCell<Vec<f32>>> {
 pub enum WichTextMessage {
     SetText(String),
     SetDataSource(String, Rc<dyn WichTextDataSource>),
+    SetValueSource(Rc<dyn WichTextValueSource>),
 }
 
 #[derive(Debug, Clone)]
@@ -42,11 +107,12 @@ pub struct WTFragment {
     color:          usize,
     color2:         usize,
     is_active:      bool,
+    value_key:      Option<String>,
     text:           String,
     cmd:            Option<String>,
     chars:          Vec<char>,
     graph:          Option<String>,
-    graph_txt_px:   (f32, f32),
+    ext_size_px:    (f32, f32),
     width_px:       f32,
     height_px:      f32,
     x:              f32,
@@ -59,11 +125,12 @@ impl WTFragment {
             color:          9,
             color2:         17,
             is_active:      false,
+            value_key:      None,
             text:           String::from(""),
             cmd:            None,
             chars:          vec![],
             graph:          None,
-            graph_txt_px:   (0.0, 0.0),
+            ext_size_px:    (0.0, 0.0),
             width_px:       0.0,
             height_px:      0.0,
             x:              0.0,
@@ -87,14 +154,26 @@ impl WTFragment {
 
         let fs = self.font_size;
 
-        if self.graph.is_none() {
+        if self.value_key.is_some() {
+            if self.is_active && self.height_px < 1.0 {
+                self.height_px = 40.0;
+            }
+
+            self.width_px =
+                self.width_px.max(
+                    p.text_width(fs, true, &self.text) + 6.0);
+            self.height_px += 2.0 * p.font_height(fs, true);
+            self.ext_size_px.1 = p.font_height(fs, true);
+
+        } else if self.graph.is_some() {
+            self.ext_size_px.0 = p.text_width(fs, true, &self.text) + 1.0;
+            self.ext_size_px.1 = p.font_height(fs, true);
+            self.height_px += self.ext_size_px.1;
+            self.width_px   = self.ext_size_px.0.max(self.width_px);
+
+        } else {
             self.width_px  = p.text_width(fs, true, &self.text) + 1.0;
             self.height_px = p.font_height(fs, true);
-        } else {
-            self.graph_txt_px.0 = p.text_width(fs, true, &self.text) + 1.0;
-            self.graph_txt_px.1 = p.font_height(fs, true);
-            self.height_px += self.graph_txt_px.1;
-            self.width_px   = self.graph_txt_px.0.max(self.width_px);
         }
     }
 }
@@ -111,14 +190,18 @@ pub struct WichText {
 
     hover:          Option<(usize, usize)>,
     active:         Option<(usize, usize)>,
+    drag:           Option<(f32, f32, f32, f32, f32, String)>,
+    drag_delta:     Option<f32>,
 
     scroll:         (f32, f32),
     render:         (f32, f32),
     pan_pos:        Option<(f32, f32)>,
 
     data_sources:   HashMap<String, (usize, Vec<(f32, f32)>, Rc<dyn WichTextDataSource>)>,
+    value_source:   Rc<dyn WichTextValueSource>,
 
     on_click:       Option<Box<dyn Fn(&mut Self, &mut State, Entity, usize, usize, &str)>>,
+    on_value:       Option<Box<dyn Fn(&mut Self, &mut State, Entity, usize, usize, &str, f32)>>,
     on_hover:       Option<Box<dyn Fn(&mut Self, &mut State, Entity, bool, usize)>>,
 }
 
@@ -132,6 +215,7 @@ impl WichText {
             new_text:       None,
             lines:          vec![],
             data_sources:   HashMap::new(),
+            value_source:   Rc::new(RefCell::new(HashMap::new())),
 
             zones:          vec![],
 
@@ -141,8 +225,11 @@ impl WichText {
 
             hover:          None,
             active:         None,
+            drag:           None,
+            drag_delta:     None,
 
             on_click:       None,
+            on_value:       None,
             on_hover:       None,
         }
 
@@ -153,6 +240,15 @@ impl WichText {
         F: 'static + Fn(&mut Self, &mut State, Entity, usize, usize, &str),
     {
         self.on_click = Some(Box::new(on_click));
+
+        self
+    }
+
+    pub fn on_value<F>(mut self, on_value: F) -> Self
+    where
+        F: 'static + Fn(&mut Self, &mut State, Entity, usize, usize, &str, f32),
+    {
+        self.on_value = Some(Box::new(on_value));
 
         self
     }
@@ -182,44 +278,61 @@ impl WichText {
             while let Some(c) = ci.next() {
                 if in_frag_start {
                     match c {
-                        'g' => {
-                            let mut graph_def = String::from("");
+                        'v' => {
+                            let mut key = String::from("");
                             while let Some(c) = ci.peek().copied() {
                                 if c != ':' {
                                     ci.next();
-                                    graph_def.push(c);
+                                    key.push(c);
                                 } else {
                                     break;
                                 }
                             }
 
-                            let mut graph_def : Vec<&str> =
-                                graph_def.split(";").collect();
-                            let name : &str =
-                                if graph_def.len() > 0 {
-                                    graph_def.remove(0)
+                            cur_fragment.value_key = Some(key.to_string());
+                        },
+                        'g' => {
+                            let mut graph_name = String::from("");
+                            while let Some(c) = ci.peek().copied() {
+                                if c != ':' {
+                                    ci.next();
+                                    graph_name.push(c);
                                 } else {
-                                    ""
-                                };
-
-                            cur_fragment.graph     = Some(name.to_string());
-                            cur_fragment.width_px  = 50.0;
-                            cur_fragment.height_px = 30.0;
-
-                            for graph_part in graph_def {
-                                let kv : Vec<&str> = graph_part.split("=").collect();
-                                if kv.len() != 2 {
-                                    continue;
-                                }
-
-                                if kv[0] == "w" {
-                                    cur_fragment.width_px =
-                                        kv[1].parse::<f32>().unwrap_or(50.0);
-                                } else if kv[0] == "h" {
-                                    cur_fragment.height_px =
-                                        kv[1].parse::<f32>().unwrap_or(30.0);
+                                    break;
                                 }
                             }
+
+                            cur_fragment.graph = Some(graph_name.to_string());
+                        },
+                        'w' => {
+                            let mut num = String::from("");
+                            while let Some(c) = ci.peek().copied() {
+                                if c.is_ascii_digit() {
+                                    ci.next();
+                                    num.push(c);
+                                } else {
+                                    break;
+                                }
+                            }
+
+                            let w = num.parse::<f32>().unwrap_or(0.0);
+                            cur_fragment.width_px      = w;
+                            cur_fragment.ext_size_px.0 = w;
+                        },
+                        'h' => {
+                            let mut num = String::from("");
+                            while let Some(c) = ci.peek().copied() {
+                                if c.is_ascii_digit() {
+                                    ci.next();
+                                    num.push(c);
+                                } else {
+                                    break;
+                                }
+                            }
+
+                            let h = num.parse::<f32>().unwrap_or(0.0);
+                            cur_fragment.height_px     = h;
+                            cur_fragment.ext_size_px.1 = h;
                         },
                         'c' => {
                             let mut num = String::from("");
@@ -371,6 +484,14 @@ impl WichText {
 
         (self.scroll.0 + dx, (self.scroll.1 + dy).clamp(-max_scroll, 0.0))
     }
+
+    fn drag_val(&self, mouse_y: f32) -> f32 {
+        if let Some((_ox, oy, step, val, tmp, _key)) = &self.drag {
+            val + ((oy - mouse_y) / 20.0) * step
+        } else {
+            0.0
+        }
+    }
 }
 
 impl Widget for WichText {
@@ -399,6 +520,9 @@ impl Widget for WichText {
                 WichTextMessage::SetDataSource(key, src) => {
                     self.data_sources.insert(key.to_string(), (0, vec![], src.clone()));
                 },
+                WichTextMessage::SetValueSource(src) => {
+                    self.value_source = src.clone();
+                },
             }
         }
 
@@ -413,8 +537,17 @@ impl Widget for WichText {
 
                     } else {
                         self.active = self.find_frag_idx_at(x, y);
-                        if self.active.is_some() {
-                            state.capture(entity);
+
+                        if let Some((line, frag)) = self.active {
+                            if let Some(key) =
+                                &self.lines[line].0[frag].value_key
+                            {
+                                let s = self.value_source.step(key);
+                                let v = self.value_source.value(key);
+
+                                self.drag = Some((x, y, s, v, v, key.to_string()));
+                                state.capture(entity);
+                            }
                         }
                     }
 
@@ -431,7 +564,16 @@ impl Widget for WichText {
                         self.scroll = self.clamp_scroll(state, 0.0, 0.0);
                         self.pan_pos = None;
 
-                        state.release(entity);
+                    } else if self.active.is_some() && self.drag.is_some() {
+                        let new_val = self.drag_val(y);
+                        if let Some((_ox, _oy, _step, _val, _tmp, key)) =
+                            self.drag.take()
+                        {
+                            let new_val =
+                                self.value_source.clamp(&key, new_val);
+                            self.value_source.set(&key, new_val);
+                        }
+
                     } else if self.active.is_some() && self.active == cur {
 
                         if let Some((line, frag)) = self.active.take() {
@@ -448,10 +590,12 @@ impl Widget for WichText {
                             }
                         }
 
-                        state.release(entity);
                     }
 
+                    state.release(entity);
+
                     self.active = None;
+                    self.drag   = None;
 
                     state.insert_event(
                         Event::new(WindowEvent::Redraw)
@@ -469,6 +613,17 @@ impl Widget for WichText {
                 WindowEvent::MouseMove(x, y) => {
                     let old_hover = self.hover;
                     self.hover = self.find_frag_idx_at(*x, *y);
+
+                    let d_val = self.drag_val(*y);
+
+                    if let Some((_ox, _oy, _step, _val, tmp, key)) =
+                        self.drag.as_mut()
+                    {
+                        *tmp = d_val;
+                        state.insert_event(
+                            Event::new(WindowEvent::Redraw)
+                                .target(Entity::root()));
+                    }
 
                     if self.pan_pos.is_some() {
                         state.insert_event(
@@ -538,6 +693,8 @@ impl Widget for WichText {
                     h: frag.height_px,
                 };
 
+                let frag_pos = frag_pos.floor();
+
                 if (frag_pos.y + frag_pos.h) < 0.0 {
                     continue;
                 } else if frag_pos.y > self.render.1 {
@@ -547,12 +704,13 @@ impl Widget for WichText {
                 let mut color =
                     self.style.block_clrs[
                         frag.color % self.style.block_clrs.len()];
+                let orig_color = color;
 
                 let mut color2 =
                     self.style.block_clrs[
                         frag.color2 % self.style.block_clrs.len()];
 
-                if self.active == self.hover
+                if (self.active == self.hover || frag.value_key.is_some())
                    && self.active == Some((line_idx, frag_idx)) {
                     color = self.style.port_select_clr;
 
@@ -563,7 +721,7 @@ impl Widget for WichText {
                 }
 
                 if let Some(graph_name) = &frag.graph {
-                    let graph_h = frag_pos.h - frag.graph_txt_px.1 - 2.0;
+                    let graph_h = frag_pos.h - frag.ext_size_px.1 - 2.0;
                     let graph_w = frag_pos.w - 2.0;
                     p.rect_stroke(
                         1.0,
@@ -608,7 +766,73 @@ impl Widget for WichText {
                         frag_pos.x,
                         frag_pos.y + graph_h,
                         graph_w,
-                        frag.graph_txt_px.1,
+                        frag.ext_size_px.1,
+                        &frag.text);
+
+                } else if let Some(key) = &frag.value_key {
+                    let mut buf : [u8; 15] = [0; 15];
+                    let v = self.value_source.value(key);
+                    let v =
+                        if let Some((_, _, _, _, tmp, drag_key)) = &self.drag {
+                            if &key == &drag_key { *tmp }
+                            else { v }
+                        } else { v };
+
+                    let v     = self.value_source.clamp(key, v);
+                    let knb_v = self.value_source.map_knob(key, v);
+                    let len   = self.value_source.fmt(key, v, &mut buf[..]);
+                    let val_s = std::str::from_utf8(&buf[0..len]).unwrap();
+
+                    let knob_h = frag_pos.h - 2.0 * frag.ext_size_px.1;
+
+                    p.rect_stroke(
+                        1.0,
+                        color,
+                        frag_pos.x + 1.5,
+                        frag_pos.y + 1.5,
+                        frag_pos.w - 3.0,
+                        frag_pos.h - frag.ext_size_px.1 - 2.0);
+
+                    p.rect_fill(
+                        self.style.bg_clr,
+                        frag_pos.x + 3.0,
+                        frag_pos.y + 3.0,
+                        frag_pos.w - 6.0,
+                        frag_pos.h - frag.ext_size_px.1 - 5.0);
+
+                    let factor = knob_h / 40.0;
+
+                    if knob_h > 10.0 {
+                        let r = (knob_h - (10.0 * factor));
+                        p.arc_stroke(1.0, orig_color, r * 0.5,
+                            std::f32::consts::PI * 0.6,
+                            std::f32::consts::PI * (0.6 + 1.8),
+                            (frag_pos.x + frag_pos.w * 0.5).floor(),
+                            (frag_pos.y + 2.0 + knob_h * 0.5).floor());
+                        p.arc_stroke(4.0 * factor, color2, r * 0.5,
+                            std::f32::consts::PI * 0.6,
+                            std::f32::consts::PI * (0.6 + 1.8 * knb_v),
+                            (frag_pos.x + frag_pos.w * 0.5).floor(),
+                            (frag_pos.y + 2.0 + knob_h * 0.5).floor());
+                    }
+
+                    p.label_mono(
+                        frag.font_size,
+                        1,
+                        color2,
+                        frag_pos.x,
+                        frag_pos.y + knob_h,
+                        frag_pos.w - 3.0,
+                        frag.ext_size_px.1,
+                        val_s);
+
+                    p.label_mono(
+                        frag.font_size,
+                        0,
+                        color,
+                        frag_pos.x,
+                        frag_pos.y + knob_h + frag.ext_size_px.1,
+                        frag_pos.w, frag.ext_size_px.1,
                         &frag.text);
 
                 } else {

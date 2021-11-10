@@ -588,14 +588,17 @@ pub fn main() {
                     text = format!("[c{}f30:Here is a Title]\n{}", title_clr, text);
 
                     text += "\n\nWichText also has Graphs:\n        ";
-                    text += "[gG1;w=200.0;h=100.0:Graph 1] [f20:=>] [c4C11gG2;w=80;h=50:Sin]\n";
+                    text += "[aw200h100gG1:Graph 1] [f20:=>] [c4C11w80h50gG2:Sin]\n";
 
                     text += "\nSet Title Colors:\n";
                     for clr in 1..=18 {
                         text += &format!("   * [ac{}:TitleClr={}]\n", clr, clr);
                     }
 
-                    for l in 0..100 {
+                    text += "And some active values: [c14f9ah20vF: F ][aw40h40vVOL:Volume][vDLY:Delay]\n";
+                    text += "[c6aw100h100vBig:Big Knob";
+
+                    for l in 0..10 {
                         text += &format!("\nOn Line {}, with some clicky comand: [ac{}:{}]!",
                                 l, l, l);
                     }
