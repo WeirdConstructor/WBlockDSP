@@ -47,6 +47,7 @@ impl BlockCodeStyle {
             hxclr!(0xac70fa),
             hxclr!(0x9850a9),
             hxclr!(0xdc4fc1), // 17
+            hxclr!(0x03fdcb), // 18
         ];
 
         Self {
