@@ -577,22 +577,55 @@ pub fn main() {
                         })
                         .build(state, col, |builder| { builder });
 
+                fn set_text(state: &mut State, wt: Entity, title_clr: usize) {
+                    let mut text =
+                        "foo[c2:Blabla[foo]]bar]and\n\
+                         next line!\n     Some [c4:Other Rich]text format!!!\n\
+                         and here a [ac10:Clicky Text!] [ac9:There Too!]\n\
+                         |>    [c12:????][c17:Colors!] :-)".to_string();
+
+
+                    text = format!("[c{}f30:Here is a Title]\n{}", title_clr, text);
+
+                    text += "\nSet Title Colors:\n";
+                    for clr in 1..=17 {
+                        text += &format!("   * [ac{}:TitleClr={}]\n", clr, clr);
+                    }
+
+                    for l in 0..100 {
+                        text += &format!("\nOn Line {}, with some clicky comand: [ac{}:{}]!",
+                                l, l, l);
+                    }
+
+                    state.insert_event(
+                        Event::new(
+                            WichTextMessage::SetText(text))
+                        .target(wt));
+                }
+
                 let wt =
                     WichText::new(style)
+                        .on_click(|_wid, state, ent, line, frag, cmd| {
+                            println!("CLICK: [{}]", cmd);
+                            let parts : Vec<&str> = cmd.split("=").collect();
+
+                            if parts.len() == 2 {
+                                if parts[0] == "TitleClr" {
+                                    set_text(
+                                        state, ent,
+                                        parts[1].parse::<usize>().unwrap_or(0));
+                                }
+                            }
+                        })
                         .build(state, row, |builder| { builder });
+
+                set_text(state, wt, 0);
 
                 state.add_theme(STYLE);
 
                 state.insert_event(
                     Event::new(BlockCodeMessage::SetCode(code))
                     .target(bc));
-                state.insert_event(
-                    Event::new(
-                        WichTextMessage::SetText(
-                            "foo[c2:Blabla[foo]]bar]and\n\
-                             next line!\n     Some [c4:Other Rich]text format!!!\n\
-                             |>    [c12:????][c17:Colors!] :-)".to_string()))
-                    .target(wt));
             });
     app.run();
 }

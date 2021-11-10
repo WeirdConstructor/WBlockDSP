@@ -24,21 +24,27 @@ pub enum WichTextMessage {
 
 #[derive(Debug, Clone)]
 pub struct WTFragment {
+    font_size:  f32,
     color:      usize,
     is_active:  bool,
     text:       String,
+    cmd:        Option<String>,
     chars:      Vec<char>,
     width_px:   f32,
+    height_px:  f32,
 }
 
 impl WTFragment {
-    fn new() -> Self {
+    fn new(font_size: f32) -> Self {
         Self {
+            font_size,
             color:      9,
             is_active:  false,
             text:       String::from(""),
+            cmd:        None,
             chars:      vec![],
             width_px:   0.0,
+            height_px:  0.0,
         }
     }
 
@@ -46,8 +52,10 @@ impl WTFragment {
         self.chars.push(c);
     }
 
-    fn finish(&mut self, fs: f32, p: &mut FemtovgPainter) {
+    fn finish(&mut self, p: &mut FemtovgPainter) {
         if self.is_active {
+            self.cmd = Some(self.chars.iter().collect());
+
             self.chars.insert(0, '[');
             self.chars.push(']');
             self.text = self.chars.iter().collect();
@@ -55,7 +63,10 @@ impl WTFragment {
 
         self.text = self.chars.iter().collect();
 
-        self.width_px = p.text_width(fs, true, &self.text) + 1.0;
+        let fs = self.font_size;
+
+        self.width_px  = p.text_width(fs, true, &self.text) + 1.0;
+        self.height_px = p.font_height(fs, true);
     }
 }
 
@@ -67,9 +78,14 @@ pub struct WichText {
     new_text:       Option<String>,
     lines:          Vec<Vec<WTFragment>>,
 
+    zones:          Vec<(Rect, usize, usize)>,
+
+    hover:          Option<(usize, usize)>,
+    active:         Option<(usize, usize)>,
+
     data_sources:   Vec<Rc<RefCell<dyn WichTextDataSource>>>,
 
-    on_click:       Option<Box<dyn Fn(&mut Self, &mut State, Entity, MouseButton)>>,
+    on_click:       Option<Box<dyn Fn(&mut Self, &mut State, Entity, usize, usize, &str)>>,
     on_hover:       Option<Box<dyn Fn(&mut Self, &mut State, Entity, bool, usize)>>,
 }
 
@@ -84,6 +100,11 @@ impl WichText {
             lines:          vec![],
             data_sources:   vec![],
 
+            zones:          vec![],
+
+            hover:          None,
+            active:         None,
+
             on_click:       None,
             on_hover:       None,
         }
@@ -92,7 +113,7 @@ impl WichText {
 
     pub fn on_click<F>(mut self, on_click: F) -> Self
     where
-        F: 'static + Fn(&mut Self, &mut State, Entity, MouseButton),
+        F: 'static + Fn(&mut Self, &mut State, Entity, usize, usize, &str),
     {
         self.on_click = Some(Box::new(on_click));
 
@@ -115,7 +136,7 @@ impl WichText {
             let mut frag_line = vec![];
             let mut ci = line.chars().peekable();
 
-            let mut cur_fragment  = WTFragment::new();
+            let mut cur_fragment  = WTFragment::new(self.style.font_size);
             let mut in_frag_start = false;
             let mut in_frag       = false;
 
@@ -136,6 +157,20 @@ impl WichText {
                             let color = num.parse::<usize>().unwrap_or(0);
                             cur_fragment.color = color;
                         },
+                        'f' => {
+                            let mut num = String::from("");
+                            while let Some(c) = ci.peek().copied() {
+                                if c.is_ascii_digit() {
+                                    ci.next();
+                                    num.push(c);
+                                } else {
+                                    break;
+                                }
+                            }
+
+                            let fs = num.parse::<f32>().unwrap_or(0.0);
+                            cur_fragment.font_size = fs;
+                        },
                         'a' => {
                             cur_fragment.is_active = true;
                         },
@@ -154,12 +189,12 @@ impl WichText {
                                 ci.next();
                                 cur_fragment.push_char(']');
                             } else {
-                                cur_fragment.finish(self.style.font_size, p);
+                                cur_fragment.finish(p);
 
                                 frag_line.push(
                                     std::mem::replace(
                                         &mut cur_fragment,
-                                        WTFragment::new()));
+                                        WTFragment::new(self.style.font_size)));
 
                                 in_frag = false;
                             }
@@ -176,12 +211,12 @@ impl WichText {
                                 ci.next();
                                 cur_fragment.push_char('[');
                             } else {
-                                cur_fragment.finish(self.style.font_size, p);
+                                cur_fragment.finish(p);
 
                                 frag_line.push(
                                     std::mem::replace(
                                         &mut cur_fragment,
-                                        WTFragment::new()));
+                                        WTFragment::new(self.style.font_size)));
 
                                 in_frag_start = true;
                             }
@@ -194,16 +229,26 @@ impl WichText {
             }
 
             if cur_fragment.chars.len() > 0 {
-                cur_fragment.finish(self.style.font_size, p);
+                cur_fragment.finish(p);
 
                 frag_line.push(
                     std::mem::replace(
                         &mut cur_fragment,
-                        WTFragment::new()));
+                        WTFragment::new(self.style.font_size)));
             }
 
             self.lines.push(frag_line);
         }
+    }
+
+    fn find_frag_idx_at(&self, x: f32, y: f32) -> Option<(usize, usize)> {
+        for z in &self.zones {
+            if z.0.is_inside(x, y) {
+                return Some((z.1, z.2));
+            }
+        }
+
+        None
     }
 }
 
@@ -238,62 +283,56 @@ impl Widget for WichText {
         if let Some(window_event) = event.message.downcast::<WindowEvent>() {
             match window_event {
                 WindowEvent::MouseDown(btn) => {
-//                    let (x, y) = (state.mouse.cursorx, state.mouse.cursory);
+                    let (x, y) = (state.mouse.cursorx, state.mouse.cursory);
 
-//                    if *btn != MouseButton::Middle {
-//                        self.m_down = self.find_pos_at_mouse(x, y);
-//
-//                        state.insert_event(
-//                            Event::new(WindowEvent::Redraw)
-//                                .target(Entity::root()));
-//                    }
-//
-//                    state.capture(entity);
+                    self.active = self.find_frag_idx_at(x, y);
+                    if self.active.is_some() {
+                        state.capture(entity);
+                    }
+
+                    state.insert_event(
+                        Event::new(WindowEvent::Redraw)
+                            .target(Entity::root()));
                 },
                 WindowEvent::MouseUp(btn) => {
                     let (x, y) = (state.mouse.cursorx, state.mouse.cursory);
 
-//                    if *btn == MouseButton::Middle {
-//                        if let Some(tmp_shift_offs) = self.tmp_shift_offs.take() {
-//                            self.shift_offs.0 += tmp_shift_offs.0;
-//                            self.shift_offs.1 += tmp_shift_offs.1;
-//                        }
-//
-//                        state.insert_event(
-//                            Event::new(WindowEvent::Redraw)
-//                                .target(Entity::root()));
-//                    } else {
-//                        state.insert_event(
-//                            Event::new(WindowEvent::Redraw)
-//                                .target(Entity::root()));
-//                    }
+                    let cur = self.find_frag_idx_at(x, y);
 
-                    state.release(entity);
-//                    self.m_down = None;
+                    if self.active.is_some() && self.active == cur {
+
+                        if let Some((line, frag)) = self.active.take() {
+                            if let Some(click) = self.on_click.take() {
+                                if let Some(cmd) =
+                                    self.lines[line][frag].cmd.take()
+                                {
+                                    (click)(self, state, entity, line, frag, &cmd);
+
+                                    self.lines[line][frag].cmd = Some(cmd);
+                                }
+
+                                self.on_click = Some(click);
+                            }
+                        }
+
+                        state.release(entity);
+                    }
+
+                    self.active = None;
+
+                    state.insert_event(
+                        Event::new(WindowEvent::Redraw)
+                            .target(Entity::root()));
                 },
                 WindowEvent::MouseMove(x, y) => {
-//                    if state.mouse.middle.state == MouseButtonState::Pressed {
-//                        self.tmp_shift_offs =
-//                            Some((
-//                                *x - state.mouse.middle.pos_down.0,
-//                                *y - state.mouse.middle.pos_down.1
-//                            ));
-//
-//                        state.insert_event(
-//                            Event::new(WindowEvent::Redraw)
-//                                .target(Entity::root()));
-//                    } else {
-//                        let old_hover = self.hover;
-//                        let mut found = false;
-//
-//                        self.hover = self.find_area_at_mouse(*x, *y);
-//
-//                        if old_hover != self.hover {
-//                            state.insert_event(
-//                                Event::new(WindowEvent::Redraw)
-//                                    .target(Entity::root()));
-//                        }
-//                    }
+                    let old_hover = self.hover;
+                    self.hover = self.find_frag_idx_at(*x, *y);
+
+                    if old_hover != self.hover {
+                        state.insert_event(
+                            Event::new(WindowEvent::Redraw)
+                                .target(Entity::root()));
+                    }
                 },
                 _ => {},
             }
@@ -323,21 +362,52 @@ impl Widget for WichText {
             println!("PARSE {:?}", self.lines);
         }
 
+        self.zones.clear();
+
         let mut y = 0.0;
-        let line_h = p.font_height(self.style.font_size, true);
-        for line in &self.lines {
+        for (line_idx, line) in self.lines.iter().enumerate() {
+            let mut line_h = p.font_height(self.style.font_size, true);
+
             let mut x = 0.0;
-            for frag in line {
-                p.label_mono(
-                    self.style.font_size,
-                    -1,
+            for (frag_idx, frag) in line.iter().enumerate() {
+                let frag_pos = Rect {
+                    x: pos.x + x,
+                    y: pos.y + y,
+                    w: frag.width_px,
+                    h: frag.height_px,
+                };
+
+                let mut color =
                     self.style.block_clrs[
-                        frag.color % self.style.block_clrs.len()],
-                    pos.x + x,
-                    pos.y + y,
-                    frag.width_px,
-                    line_h,
+                        frag.color % self.style.block_clrs.len()];
+
+                if self.active == self.hover
+                   && self.active == Some((line_idx, frag_idx)) {
+                    color = self.style.port_select_clr;
+
+                } else if self.hover == Some((line_idx, frag_idx)) {
+                    p.rect_fill(
+                        color, frag_pos.x, frag_pos.y, frag_pos.w, frag_pos.h);
+                    color = self.style.bg_clr;
+                }
+
+                p.label_mono(
+                    frag.font_size,
+                    -1,
+                    color,
+                    frag_pos.x, frag_pos.y, frag_pos.w, frag_pos.h,
                     &frag.text);
+
+                if frag.is_active {
+                    self.zones.push((Rect {
+                        x: pos.x + x,
+                        y: pos.y + y,
+                        w: frag.width_px,
+                        h: frag.height_px,
+                    }, line_idx, frag_idx));
+                }
+
+                line_h = line_h.max(frag.height_px);
 
                 x += frag.width_px;
             }
