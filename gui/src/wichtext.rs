@@ -414,10 +414,10 @@ impl Widget for WichText {
         };
 
         let pos : Rect = bounds.into();
-        let pos = pos.floor();
 
         p.rect_fill(self.style.bg_clr, pos.x, pos.y, pos.w, pos.h);
 
+        let pos = pos.floor();
         let pos = pos.crop_right(10.0);
 
         let scroll_box = Rect {
@@ -452,6 +452,12 @@ impl Widget for WichText {
                     w: frag.width_px,
                     h: frag.height_px,
                 };
+
+                if (frag_pos.y + frag_pos.h) < 0.0 {
+                    continue;
+                } else if frag_pos.y > self.render.1 {
+                    continue;
+                }
 
                 let mut color =
                     self.style.block_clrs[

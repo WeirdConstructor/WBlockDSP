@@ -716,6 +716,8 @@ impl Widget for BlockCode {
         };
 
         let pos : Rect = bounds.into();
+        p.rect_fill(self.style.bg_clr, pos.x, pos.y, pos.w, pos.h);
+
         let pos = pos.floor();
 
         self.reset_areas();
