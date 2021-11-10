@@ -588,7 +588,7 @@ pub fn main() {
                     text = format!("[c{}f30:Here is a Title]\n{}", title_clr, text);
 
                     text += "\nSet Title Colors:\n";
-                    for clr in 1..=17 {
+                    for clr in 1..=18 {
                         text += &format!("   * [ac{}:TitleClr={}]\n", clr, clr);
                     }
 
