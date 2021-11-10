@@ -587,6 +587,9 @@ pub fn main() {
 
                     text = format!("[c{}f30:Here is a Title]\n{}", title_clr, text);
 
+                    text += "\n\nWichText also has Graphs:\n        ";
+                    text += "[gG1;w=200.0;h=100.0:Graph 1] [f20:=>] [c4C11gG2;w=80;h=50:Sin]\n";
+
                     text += "\nSet Title Colors:\n";
                     for clr in 1..=18 {
                         text += &format!("   * [ac{}:TitleClr={}]\n", clr, clr);
@@ -597,10 +600,40 @@ pub fn main() {
                                 l, l, l);
                     }
 
+                    let mut sin_data = vec![];
+                    for i in 0..128 {
+                        sin_data.push(
+                            (((i as f32 / 128.0) * std::f32::consts::TAU).sin() + 1.0) * 0.5);
+                    }
+
+                    state.insert_event(
+                        Event::new(
+                            WichTextMessage::SetDataSource(
+                                "G2".to_string(),
+                                Rc::new(sin_data)))
+                        .target(wt));
+
+                    state.insert_event(
+                        Event::new(
+                            WichTextMessage::SetDataSource(
+                                "G1".to_string(),
+                                Rc::new(vec![
+                                    0.0_f32,
+                                    1.0_f32,
+                                    0.5_f32,
+                                    0.2_f32,
+                                    0.1_f32,
+                                    0.5_f32,
+                                    0.6_f32,
+                                    0.8_f32,
+                                    0.9_f32,
+                                ])))
+                        .target(wt));
                     state.insert_event(
                         Event::new(
                             WichTextMessage::SetText(text))
                         .target(wt));
+
                 }
 
                 let wt =
