@@ -76,12 +76,16 @@ pub struct WichText {
     style:          BlockCodeStyle,
 
     new_text:       Option<String>,
-    lines:          Vec<Vec<WTFragment>>,
+    lines:          Vec<(Vec<WTFragment>, f32, f32)>,
 
     zones:          Vec<(Rect, usize, usize)>,
 
     hover:          Option<(usize, usize)>,
     active:         Option<(usize, usize)>,
+
+    scroll:         (f32, f32),
+    render:         (f32, f32),
+    pan_pos:        Option<(f32, f32)>,
 
     data_sources:   Vec<Rc<RefCell<dyn WichTextDataSource>>>,
 
@@ -101,6 +105,10 @@ impl WichText {
             data_sources:   vec![],
 
             zones:          vec![],
+
+            scroll:         (0.0, 0.0),
+            render:         (0.0, 0.0),
+            pan_pos:        None,
 
             hover:          None,
             active:         None,
@@ -131,6 +139,8 @@ impl WichText {
 
     fn parse(&mut self, p: &mut FemtovgPainter, text: &str) {
         self.lines.clear();
+
+        let mut cur_y = 0.0;
 
         for line in text.lines() {
             let mut frag_line = vec![];
@@ -237,7 +247,15 @@ impl WichText {
                         WTFragment::new(self.style.font_size)));
             }
 
-            self.lines.push(frag_line);
+            let mut line_h = p.font_height(self.style.font_size, true);
+
+            for frag in &frag_line {
+                line_h = line_h.max(frag.height_px);
+            }
+
+            self.lines.push((frag_line, line_h, cur_y));
+
+            cur_y += line_h;
         }
     }
 
@@ -249,6 +267,24 @@ impl WichText {
         }
 
         None
+    }
+
+    fn clamp_scroll(&mut self, state: &mut State, mut dx: f32, mut dy: f32) -> (f32, f32) {
+        let full_h =
+            self.lines.last().map(|(_, line_h, line_y)| {
+                line_y + line_h
+            }).unwrap_or(0.0);
+
+        let max_scroll =
+            if full_h > self.render.1 { full_h - self.render.1 }
+            else { 0.0 };
+
+        if let Some((px, py)) = self.pan_pos {
+            dx += state.mouse.cursorx - px;
+            dy += state.mouse.cursory - py;
+        }
+
+        (self.scroll.0 + dx, (self.scroll.1 + dy).clamp(-max_scroll, 0.0))
     }
 }
 
@@ -285,9 +321,15 @@ impl Widget for WichText {
                 WindowEvent::MouseDown(btn) => {
                     let (x, y) = (state.mouse.cursorx, state.mouse.cursory);
 
-                    self.active = self.find_frag_idx_at(x, y);
-                    if self.active.is_some() {
+                    if *btn == MouseButton::Middle {
+                        self.pan_pos = Some((x, y));
                         state.capture(entity);
+
+                    } else {
+                        self.active = self.find_frag_idx_at(x, y);
+                        if self.active.is_some() {
+                            state.capture(entity);
+                        }
                     }
 
                     state.insert_event(
@@ -299,16 +341,21 @@ impl Widget for WichText {
 
                     let cur = self.find_frag_idx_at(x, y);
 
-                    if self.active.is_some() && self.active == cur {
+                    if *btn == MouseButton::Middle {
+                        self.scroll = self.clamp_scroll(state, 0.0, 0.0);
+                        self.pan_pos = None;
+
+                        state.release(entity);
+                    } else if self.active.is_some() && self.active == cur {
 
                         if let Some((line, frag)) = self.active.take() {
                             if let Some(click) = self.on_click.take() {
                                 if let Some(cmd) =
-                                    self.lines[line][frag].cmd.take()
+                                    self.lines[line].0[frag].cmd.take()
                                 {
                                     (click)(self, state, entity, line, frag, &cmd);
 
-                                    self.lines[line][frag].cmd = Some(cmd);
+                                    self.lines[line].0[frag].cmd = Some(cmd);
                                 }
 
                                 self.on_click = Some(click);
@@ -324,11 +371,25 @@ impl Widget for WichText {
                         Event::new(WindowEvent::Redraw)
                             .target(Entity::root()));
                 },
+                WindowEvent::MouseScroll(_x, y) => {
+                    if self.pan_pos.is_none() {
+                        self.scroll = self.clamp_scroll(state, 0.0, *y * 50.0);
+                    }
+
+                    state.insert_event(
+                        Event::new(WindowEvent::Redraw)
+                            .target(Entity::root()));
+                },
                 WindowEvent::MouseMove(x, y) => {
                     let old_hover = self.hover;
                     self.hover = self.find_frag_idx_at(*x, *y);
 
-                    if old_hover != self.hover {
+                    if self.pan_pos.is_some() {
+                        state.insert_event(
+                            Event::new(WindowEvent::Redraw)
+                                .target(Entity::root()));
+
+                    } else if old_hover != self.hover {
                         state.insert_event(
                             Event::new(WindowEvent::Redraw)
                                 .target(Entity::root()));
@@ -357,22 +418,37 @@ impl Widget for WichText {
 
         p.rect_fill(self.style.bg_clr, pos.x, pos.y, pos.w, pos.h);
 
+        let pos = pos.crop_right(10.0);
+
+        let scroll_box = Rect {
+            x: pos.w + pos.x,
+            y: pos.y,
+            w: 10.0,
+            h: pos.h,
+        };
+
         if let Some(new_text) = self.new_text.take() {
             self.parse(p, &new_text);
-            println!("PARSE {:?}", self.lines);
         }
 
         self.zones.clear();
 
-        let mut y = 0.0;
-        for (line_idx, line) in self.lines.iter().enumerate() {
-            let mut line_h = p.font_height(self.style.font_size, true);
+        self.render = (pos.w, pos.h);
 
+        let full_h =
+            self.lines.last().map(|(_, line_h, line_y)| {
+                line_y + line_h
+            }).unwrap_or(0.0);
+
+        let (scroll_x, scroll_y) = self.clamp_scroll(state, 0.0, 0.0);
+
+        let mut y = 0.0;
+        for (line_idx, (line, line_h, line_y)) in self.lines.iter().enumerate() {
             let mut x = 0.0;
             for (frag_idx, frag) in line.iter().enumerate() {
                 let frag_pos = Rect {
                     x: pos.x + x,
-                    y: pos.y + y,
+                    y: pos.y + line_y + scroll_y,
                     w: frag.width_px,
                     h: frag.height_px,
                 };
@@ -399,20 +475,32 @@ impl Widget for WichText {
                     &frag.text);
 
                 if frag.is_active {
-                    self.zones.push((Rect {
-                        x: pos.x + x,
-                        y: pos.y + y,
-                        w: frag.width_px,
-                        h: frag.height_px,
-                    }, line_idx, frag_idx));
+                    self.zones.push((frag_pos, line_idx, frag_idx));
                 }
-
-                line_h = line_h.max(frag.height_px);
 
                 x += frag.width_px;
             }
+        }
 
-            y += line_h;
+        if full_h > self.render.1 {
+            let scroll_marker_h = (scroll_box.h / 20.0).floor();
+            let max_scroll = full_h - self.render.1;
+            let marker_y =
+                (scroll_y / max_scroll)
+                    // XXX: +1.0 for the extra pixel padding!
+                * ((scroll_marker_h + 1.0) - scroll_box.h);
+
+            p.rect_stroke(1.0, self.style.border_clr,
+                scroll_box.x + 0.5,
+                scroll_box.y + 0.5,
+                scroll_box.w - 1.0,
+                scroll_box.h - 1.0);
+
+            p.rect_fill(self.style.border_clr,
+                scroll_box.x + 2.0,
+                marker_y + 2.0,
+                scroll_box.w - 4.0,
+                scroll_marker_h - 3.0);
         }
     }
 }
