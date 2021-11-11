@@ -195,6 +195,110 @@ impl WTFragment {
             }
         }
     }
+
+    fn draw<F: for<'a> Fn(&str, &'a mut [u8]) -> (&'a str, f32)>(&self, p: &mut FemtovgPainter,
+        data_sources: &mut HashMap<String, DataSource>,
+        fetch_value: &F, // &Rc<dyn WichTextValueSource>,
+        pos:   Rect,
+        bg_clr:(f32, f32, f32),
+        color: (f32, f32, f32),
+        color2: (f32, f32, f32),
+        orig_color: (f32, f32, f32))
+    {
+        match &self.typ {
+            FragType::Graph { key } => {
+                let graph_h = pos.h - self.ext_size_px.1 - 2.0;
+                let graph_w = pos.w - 2.0;
+                p.rect_stroke(
+                    1.0,
+                    color,
+                    pos.x + 0.5,
+                    pos.y + 1.5,
+                    graph_w,
+                    graph_h);
+
+                if let Some(src) = data_sources.get_mut(key) {
+                    src.create_points(graph_w, graph_h);
+                    src.draw(p, pos.x, pos.y, color2);
+                }
+
+                p.label_mono(
+                    self.font_size,
+                    0,
+                    color,
+                    pos.x,
+                    pos.y + graph_h,
+                    graph_w,
+                    self.ext_size_px.1,
+                    &self.text);
+
+            },
+            FragType::Value { key } => {
+                let mut buf : [u8; 15] = [0; 15];
+                let (val_s, knb_v) = (*fetch_value)(key, &mut buf[..]);
+                let knob_h = pos.h - 2.0 * self.ext_size_px.1;
+
+                p.rect_stroke(
+                    1.0,
+                    color,
+                    pos.x + 1.5,
+                    pos.y + 1.5,
+                    pos.w - 3.0,
+                    pos.h - self.ext_size_px.1 - 2.0);
+
+                p.rect_fill(
+                    bg_clr,
+                    pos.x + 3.0,
+                    pos.y + 3.0,
+                    pos.w - 6.0,
+                    pos.h - self.ext_size_px.1 - 5.0);
+
+                let factor = knob_h / 40.0;
+
+                if knob_h > 10.0 {
+                    let r = (knob_h - (10.0 * factor));
+                    p.arc_stroke(1.0, orig_color, r * 0.5,
+                        std::f32::consts::PI * 0.6,
+                        std::f32::consts::PI * (0.6 + 1.8),
+                        (pos.x + pos.w * 0.5).floor(),
+                        (pos.y + 2.0 + knob_h * 0.5).floor());
+                    p.arc_stroke(4.0 * factor, color2, r * 0.5,
+                        std::f32::consts::PI * 0.6,
+                        std::f32::consts::PI * (0.6 + 1.8 * knb_v),
+                        (pos.x + pos.w * 0.5).floor(),
+                        (pos.y + 2.0 + knob_h * 0.5).floor());
+                }
+
+                p.label_mono(
+                    self.font_size,
+                    1,
+                    color2,
+                    pos.x,
+                    pos.y + knob_h,
+                    pos.w - 3.0,
+                    self.ext_size_px.1,
+                    val_s);
+
+                p.label_mono(
+                    self.font_size,
+                    0,
+                    color,
+                    pos.x,
+                    pos.y + knob_h + self.ext_size_px.1,
+                    pos.w, self.ext_size_px.1,
+                    &self.text);
+
+            },
+            FragType::Text => {
+                p.label_mono(
+                    self.font_size,
+                    -1,
+                    color,
+                    pos.x, pos.y, pos.w, pos.h,
+                    &self.text);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -251,6 +355,56 @@ impl WTLine {
     }
 }
 
+#[derive(Clone)]
+struct DataSource {
+    generation:  usize,
+    point_cache: Vec<(f32, f32)>,
+    source:      Rc<dyn WichTextDataSource>,
+}
+
+impl DataSource {
+    fn new(source: Rc<dyn WichTextDataSource>) -> Self {
+        Self {
+            generation:     0,
+            point_cache:    vec![],
+            source,
+        }
+    }
+
+    fn create_points(&mut self, graph_w: f32, graph_h: f32) {
+        if self.generation == self.source.generation() {
+            return;
+        }
+
+        self.point_cache.clear();
+
+        if self.source.samples() > 0 {
+            let xd =
+                (graph_w - 1.0)
+                / (self.source.samples() as f32 - 1.0);
+            let mut x = 0.0;
+
+            for i in 0..self.source.samples() {
+                let s = 1.0 - self.source.sample(i).clamp(0.0, 1.0);
+                self.point_cache.push((x, s * (graph_h - 2.0)));
+                x += xd;
+            }
+        }
+
+        self.generation = self.source.generation();
+    }
+
+    fn draw(&self, p: &mut FemtovgPainter, x: f32, y: f32, color: (f32, f32, f32)) {
+        p.path_stroke(
+            1.0, color,
+            &mut self.point_cache.iter().copied()
+                .map(|p| (
+                    (p.0 + x + 0.5).round(),
+                    (p.1 + y + 1.5).round() + 0.5)),
+            false);
+    }
+}
+
 pub struct WichText {
     font:           Option<FontId>,
     font_mono:      Option<FontId>,
@@ -271,7 +425,7 @@ pub struct WichText {
     render:         (f32, f32),
     pan_pos:        Option<(f32, f32)>,
 
-    data_sources:   HashMap<String, (usize, Vec<(f32, f32)>, Rc<dyn WichTextDataSource>)>,
+    data_sources:   HashMap<String, DataSource>,
     value_source:   Rc<dyn WichTextValueSource>,
 
     on_click:       Option<Box<dyn Fn(&mut Self, &mut State, Entity, usize, usize, &str)>>,
@@ -571,7 +725,9 @@ impl Widget for WichText {
                         .target(Entity::root()));
                 },
                 WichTextMessage::SetDataSource(key, src) => {
-                    self.data_sources.insert(key.to_string(), (0, vec![], src.clone()));
+                    self.data_sources.insert(
+                        key.to_string(),
+                        DataSource::new(src.clone()));
                 },
                 WichTextMessage::SetValueSource(src) => {
                     self.value_source = src.clone();
@@ -735,6 +891,27 @@ impl Widget for WichText {
 
         let (scroll_x, scroll_y) = self.clamp_scroll(state, 0.0, 0.0);
 
+        let val_src = self.value_source.clone();
+        let drag = self.drag.clone();
+
+        let fetch_value
+            : Box<dyn for<'a> Fn(&str, &'a mut [u8]) -> (&'a str, f32)> =
+            Box::new(move |key: &str, buf: &mut [u8]| {
+                let v = val_src.value(&key);
+                let v =
+                    if let Some((_, _, _, _, tmp, drag_key)) = &drag {
+                        if &key == &drag_key { *tmp }
+                        else { v }
+                    } else { v };
+
+                let v     = val_src.clamp(&key, v);
+                let knb_v = val_src.map_knob(&key, v);
+                let len   = val_src.fmt(&key, v, &mut buf[..]);
+                let val_s = std::str::from_utf8(&buf[0..len]).unwrap();
+
+                (val_s, knb_v)
+            });
+
         let mut y = 0.0;
         for (line_idx, WTLine { frags, line_h, line_y, align }) in
             self.lines.iter().enumerate()
@@ -781,129 +958,12 @@ impl Widget for WichText {
                     color = self.style.bg_clr;
                 }
 
-                if let FragType::Graph { key } = &frag.typ {
-                    let graph_h = frag_pos.h - frag.ext_size_px.1 - 2.0;
-                    let graph_w = frag_pos.w - 2.0;
-                    p.rect_stroke(
-                        1.0,
-                        color,
-                        frag_pos.x + 0.5,
-                        frag_pos.y + 1.5,
-                        graph_w,
-                        graph_h);
-
-                    if let Some((gen, buf, data_src)) =
-                        self.data_sources.get_mut(key)
-                    {
-                        if *gen != data_src.generation() {
-                            buf.clear();
-                            if data_src.samples() > 0 {
-                                let xd =
-                                    (graph_w - 1.0)
-                                    / (data_src.samples() as f32 - 1.0);
-                                let mut x = 0.0;
-                                for i in 0..data_src.samples() {
-                                    let s = 1.0 - data_src.sample(i).clamp(0.0, 1.0);
-                                    buf.push((x, s * (graph_h - 2.0)));
-                                    x += xd;
-                                }
-                            }
-                            *gen = data_src.generation();
-                        }
-
-                        p.path_stroke(
-                            1.0, color2,
-                            &mut buf.iter().copied()
-                                .map(|p| (
-                                    (p.0 + frag_pos.x + 0.5).round(),
-                                    (p.1 + frag_pos.y + 1.5).round() + 0.5)),
-                            false);
-                    }
-
-                    p.label_mono(
-                        frag.font_size,
-                        0,
-                        color,
-                        frag_pos.x,
-                        frag_pos.y + graph_h,
-                        graph_w,
-                        frag.ext_size_px.1,
-                        &frag.text);
-
-                } else if let FragType::Value { key } = &frag.typ {
-                    let mut buf : [u8; 15] = [0; 15];
-                    let v = self.value_source.value(key);
-                    let v =
-                        if let Some((_, _, _, _, tmp, drag_key)) = &self.drag {
-                            if &key == &drag_key { *tmp }
-                            else { v }
-                        } else { v };
-
-                    let v     = self.value_source.clamp(key, v);
-                    let knb_v = self.value_source.map_knob(key, v);
-                    let len   = self.value_source.fmt(key, v, &mut buf[..]);
-                    let val_s = std::str::from_utf8(&buf[0..len]).unwrap();
-
-                    let knob_h = frag_pos.h - 2.0 * frag.ext_size_px.1;
-
-                    p.rect_stroke(
-                        1.0,
-                        color,
-                        frag_pos.x + 1.5,
-                        frag_pos.y + 1.5,
-                        frag_pos.w - 3.0,
-                        frag_pos.h - frag.ext_size_px.1 - 2.0);
-
-                    p.rect_fill(
-                        self.style.bg_clr,
-                        frag_pos.x + 3.0,
-                        frag_pos.y + 3.0,
-                        frag_pos.w - 6.0,
-                        frag_pos.h - frag.ext_size_px.1 - 5.0);
-
-                    let factor = knob_h / 40.0;
-
-                    if knob_h > 10.0 {
-                        let r = (knob_h - (10.0 * factor));
-                        p.arc_stroke(1.0, orig_color, r * 0.5,
-                            std::f32::consts::PI * 0.6,
-                            std::f32::consts::PI * (0.6 + 1.8),
-                            (frag_pos.x + frag_pos.w * 0.5).floor(),
-                            (frag_pos.y + 2.0 + knob_h * 0.5).floor());
-                        p.arc_stroke(4.0 * factor, color2, r * 0.5,
-                            std::f32::consts::PI * 0.6,
-                            std::f32::consts::PI * (0.6 + 1.8 * knb_v),
-                            (frag_pos.x + frag_pos.w * 0.5).floor(),
-                            (frag_pos.y + 2.0 + knob_h * 0.5).floor());
-                    }
-
-                    p.label_mono(
-                        frag.font_size,
-                        1,
-                        color2,
-                        frag_pos.x,
-                        frag_pos.y + knob_h,
-                        frag_pos.w - 3.0,
-                        frag.ext_size_px.1,
-                        val_s);
-
-                    p.label_mono(
-                        frag.font_size,
-                        0,
-                        color,
-                        frag_pos.x,
-                        frag_pos.y + knob_h + frag.ext_size_px.1,
-                        frag_pos.w, frag.ext_size_px.1,
-                        &frag.text);
-
-                } else {
-                    p.label_mono(
-                        frag.font_size,
-                        -1,
-                        color,
-                        frag_pos.x, frag_pos.y, frag_pos.w, frag_pos.h,
-                        &frag.text);
-                }
+                frag.draw(
+                    p,
+                    &mut self.data_sources,
+                    &fetch_value,
+                    frag_pos,
+                    self.style.bg_clr, color, color2, orig_color);
 
                 if frag.is_active {
                     self.zones.push((frag_pos, line_idx, frag_idx));
