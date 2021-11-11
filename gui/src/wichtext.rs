@@ -14,6 +14,8 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 use std::collections::HashMap;
+use std::str::Chars;
+use std::iter::Peekable;
 
 pub trait WichTextValueSource {
     fn set(&self, key: &str, v: f32);
@@ -102,16 +104,32 @@ pub enum WichTextMessage {
 }
 
 #[derive(Debug, Clone)]
+enum FragType {
+    Text,
+    Graph { key: String },
+    Value { key: String },
+}
+
+impl FragType {
+    fn is_value(&self) -> bool {
+        if let FragType::Value { .. } = self {
+            true
+        } else {
+            false
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct WTFragment {
+    typ:            FragType,
     font_size:      f32,
     color:          usize,
     color2:         usize,
     is_active:      bool,
-    value_key:      Option<String>,
     text:           String,
     cmd:            Option<String>,
     chars:          Vec<char>,
-    graph:          Option<String>,
     ext_size_px:    (f32, f32),
     width_px:       f32,
     height_px:      f32,
@@ -122,14 +140,13 @@ impl WTFragment {
     fn new(font_size: f32) -> Self {
         Self {
             font_size,
+            typ:            FragType::Text,
             color:          9,
             color2:         17,
             is_active:      false,
-            value_key:      None,
             text:           String::from(""),
             cmd:            None,
             chars:          vec![],
-            graph:          None,
             ext_size_px:    (0.0, 0.0),
             width_px:       0.0,
             height_px:      0.0,
@@ -154,27 +171,83 @@ impl WTFragment {
 
         let fs = self.font_size;
 
-        if self.value_key.is_some() {
-            if self.is_active && self.height_px < 1.0 {
-                self.height_px = 40.0;
+        match self.typ {
+            FragType::Value { .. } => {
+                if self.is_active && self.height_px < 1.0 {
+                    self.height_px = 40.0;
+                }
+
+                self.width_px =
+                    self.width_px.max(
+                        p.text_width(fs, true, &self.text) + 6.0);
+                self.height_px += 2.0 * p.font_height(fs, true);
+                self.ext_size_px.1 = p.font_height(fs, true);
+            },
+            FragType::Graph { .. } => {
+                self.ext_size_px.0 = p.text_width(fs, true, &self.text) + 1.0;
+                self.ext_size_px.1 = p.font_height(fs, true);
+                self.height_px += self.ext_size_px.1;
+                self.width_px   = self.ext_size_px.0.max(self.width_px);
+            },
+            FragType::Text => {
+                self.width_px  = p.text_width(fs, true, &self.text) + 1.0;
+                self.height_px = p.font_height(fs, true);
             }
-
-            self.width_px =
-                self.width_px.max(
-                    p.text_width(fs, true, &self.text) + 6.0);
-            self.height_px += 2.0 * p.font_height(fs, true);
-            self.ext_size_px.1 = p.font_height(fs, true);
-
-        } else if self.graph.is_some() {
-            self.ext_size_px.0 = p.text_width(fs, true, &self.text) + 1.0;
-            self.ext_size_px.1 = p.font_height(fs, true);
-            self.height_px += self.ext_size_px.1;
-            self.width_px   = self.ext_size_px.0.max(self.width_px);
-
-        } else {
-            self.width_px  = p.text_width(fs, true, &self.text) + 1.0;
-            self.height_px = p.font_height(fs, true);
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum VAlign {
+    Bottom,
+    Top,
+    Middle,
+}
+
+impl VAlign {
+    fn from_char(c: char) -> Self {
+        match c {
+            't'     => VAlign::Top,
+            'm'     => VAlign::Middle,
+            'b' | _ => VAlign::Bottom,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct WTLine {
+    frags:  Vec<WTFragment>,
+    line_h: f32,
+    line_y: f32,
+    align:  VAlign,
+}
+
+impl WTLine {
+    fn new() -> Self {
+        Self {
+            frags:  vec![],
+            line_h: 0.0,
+            line_y: 0.0,
+            align:  VAlign::Bottom,
+        }
+    }
+
+    fn add(&mut self, frag: WTFragment) { self.frags.push(frag); }
+
+    fn finish(&mut self, default_h: f32, y: f32) -> f32 {
+        let mut line_h = default_h;
+        let mut x      = 0.0;
+
+        for frag in &mut self.frags {
+            line_h = line_h.max(frag.height_px);
+            frag.x = x;
+            x += frag.width_px;
+        }
+
+        self.line_h = line_h;
+        self.line_y = y;
+
+        line_h
     }
 }
 
@@ -184,7 +257,8 @@ pub struct WichText {
     style:          BlockCodeStyle,
 
     new_text:       Option<String>,
-    lines:          Vec<(Vec<WTFragment>, f32, f32, u8)>,
+    lines:          Vec<WTLine>,
+    full_h:         f32,
 
     zones:          Vec<(Rect, usize, usize)>,
 
@@ -205,6 +279,34 @@ pub struct WichText {
     on_hover:       Option<Box<dyn Fn(&mut Self, &mut State, Entity, bool, usize)>>,
 }
 
+fn parse_key(ci: &mut Peekable<Chars<'_>>) -> String {
+    let mut key = String::from("");
+    while let Some(c) = ci.peek().copied() {
+        if c != ':' {
+            ci.next();
+            key.push(c);
+        } else {
+            break;
+        }
+    }
+    key
+}
+
+fn parse_number<T: std::str::FromStr>(ci: &mut Peekable<Chars<'_>>, default: T) -> T {
+    let mut s = String::from("");
+
+    while let Some(c) = ci.peek().copied() {
+        if c.is_ascii_digit() {
+            ci.next();
+            s.push(c);
+        } else {
+            break;
+        }
+    }
+
+    s.parse::<T>().unwrap_or(default)
+}
+
 impl WichText {
     pub fn new(style: BlockCodeStyle) -> Self {
         Self {
@@ -214,6 +316,7 @@ impl WichText {
 
             new_text:       None,
             lines:          vec![],
+            full_h:         0.0,
             data_sources:   HashMap::new(),
             value_source:   Rc::new(RefCell::new(HashMap::new())),
 
@@ -268,7 +371,7 @@ impl WichText {
         let mut cur_y = 0.0;
 
         for line in text.lines() {
-            let mut frag_line = vec![];
+            let mut frag_line = WTLine::new();
             let mut ci = line.chars().peekable();
 
             let mut cur_fragment  = WTFragment::new(self.style.font_size);
@@ -288,30 +391,12 @@ impl WichText {
                             }
                         },
                         'v' => {
-                            let mut key = String::from("");
-                            while let Some(c) = ci.peek().copied() {
-                                if c != ':' {
-                                    ci.next();
-                                    key.push(c);
-                                } else {
-                                    break;
-                                }
-                            }
-
-                            cur_fragment.value_key = Some(key.to_string());
+                            let key = parse_key(&mut ci);
+                            cur_fragment.typ = FragType::Value { key };
                         },
                         'g' => {
-                            let mut graph_name = String::from("");
-                            while let Some(c) = ci.peek().copied() {
-                                if c != ':' {
-                                    ci.next();
-                                    graph_name.push(c);
-                                } else {
-                                    break;
-                                }
-                            }
-
-                            cur_fragment.graph = Some(graph_name.to_string());
+                            let key = parse_key(&mut ci);
+                            cur_fragment.typ = FragType::Graph { key };
                         },
                         'w' => {
                             let mut num = String::from("");
@@ -329,61 +414,21 @@ impl WichText {
                             cur_fragment.ext_size_px.0 = w;
                         },
                         'h' => {
-                            let mut num = String::from("");
-                            while let Some(c) = ci.peek().copied() {
-                                if c.is_ascii_digit() {
-                                    ci.next();
-                                    num.push(c);
-                                } else {
-                                    break;
-                                }
-                            }
-
-                            let h = num.parse::<f32>().unwrap_or(0.0);
+                            let h = parse_number::<f32>(&mut ci, 0.0);
                             cur_fragment.height_px     = h;
                             cur_fragment.ext_size_px.1 = h;
                         },
                         'c' => {
-                            let mut num = String::from("");
-                            while let Some(c) = ci.peek().copied() {
-                                if c.is_ascii_digit() {
-                                    ci.next();
-                                    num.push(c);
-                                } else {
-                                    break;
-                                }
-                            }
-
-                            let color = num.parse::<usize>().unwrap_or(0);
-                            cur_fragment.color = color;
+                            cur_fragment.color =
+                                parse_number::<usize>(&mut ci, 0);
                         },
                         'C' => {
-                            let mut num = String::from("");
-                            while let Some(c) = ci.peek().copied() {
-                                if c.is_ascii_digit() {
-                                    ci.next();
-                                    num.push(c);
-                                } else {
-                                    break;
-                                }
-                            }
-
-                            let color = num.parse::<usize>().unwrap_or(0);
-                            cur_fragment.color2 = color;
+                            cur_fragment.color2 =
+                                parse_number::<usize>(&mut ci, 0);
                         },
                         'f' => {
-                            let mut num = String::from("");
-                            while let Some(c) = ci.peek().copied() {
-                                if c.is_ascii_digit() {
-                                    ci.next();
-                                    num.push(c);
-                                } else {
-                                    break;
-                                }
-                            }
-
-                            let fs = num.parse::<f32>().unwrap_or(0.0);
-                            cur_fragment.font_size = fs;
+                            cur_fragment.font_size =
+                                parse_number::<f32>(&mut ci, 0.0);
                         },
                         'a' => {
                             cur_fragment.is_active = true;
@@ -405,7 +450,7 @@ impl WichText {
                             } else {
                                 cur_fragment.finish(p);
 
-                                frag_line.push(
+                                frag_line.add(
                                     std::mem::replace(
                                         &mut cur_fragment,
                                         WTFragment::new(self.style.font_size)));
@@ -427,7 +472,7 @@ impl WichText {
                             } else {
                                 cur_fragment.finish(p);
 
-                                frag_line.push(
+                                frag_line.add(
                                     std::mem::replace(
                                         &mut cur_fragment,
                                         WTFragment::new(self.style.font_size)));
@@ -445,25 +490,21 @@ impl WichText {
             if cur_fragment.chars.len() > 0 {
                 cur_fragment.finish(p);
 
-                frag_line.push(
+                frag_line.add(
                     std::mem::replace(
                         &mut cur_fragment,
                         WTFragment::new(self.style.font_size)));
             }
 
-            let mut line_h = p.font_height(self.style.font_size, true);
 
-            let mut x = 0.0;
-            for frag in &mut frag_line {
-                line_h = line_h.max(frag.height_px);
-                frag.x = x;
-                x += frag.width_px;
-            }
-
-            self.lines.push((frag_line, line_h, cur_y, align));
+            let mut default_font_h = p.font_height(self.style.font_size, true);
+            let line_h = frag_line.finish(default_font_h, cur_y);
+            self.lines.push(frag_line);
 
             cur_y += line_h;
         }
+
+        self.full_h = cur_y;
     }
 
     fn find_frag_idx_at(&self, x: f32, y: f32) -> Option<(usize, usize)> {
@@ -477,13 +518,8 @@ impl WichText {
     }
 
     fn clamp_scroll(&mut self, state: &mut State, mut dx: f32, mut dy: f32) -> (f32, f32) {
-        let full_h =
-            self.lines.last().map(|(_, line_h, line_y, _)| {
-                line_y + line_h
-            }).unwrap_or(0.0);
-
         let max_scroll =
-            if full_h > self.render.1 { full_h - self.render.1 }
+            if self.full_h > self.render.1 { self.full_h - self.render.1 }
             else { 0.0 };
 
         if let Some((px, py)) = self.pan_pos {
@@ -500,6 +536,14 @@ impl WichText {
         } else {
             0.0
         }
+    }
+
+    fn get(&self, line: usize, frag: usize) -> Option<&WTFragment> {
+        self.lines.get(line)?.frags.get(frag)
+    }
+
+    fn get_mut(&mut self, line: usize, frag: usize) -> Option<&mut WTFragment> {
+        self.lines.get_mut(line)?.frags.get_mut(frag)
     }
 }
 
@@ -548,11 +592,11 @@ impl Widget for WichText {
                         self.active = self.find_frag_idx_at(x, y);
 
                         if let Some((line, frag)) = self.active {
-                            if let Some(key) =
-                                &self.lines[line].0[frag].value_key
+                            if let Some(FragType::Value { key }) =
+                                self.get(line, frag).map(|f| &f.typ)
                             {
-                                let s = self.value_source.step(key);
-                                let v = self.value_source.value(key);
+                                let s = self.value_source.step(&key);
+                                let v = self.value_source.value(&key);
 
                                 self.drag = Some((x, y, s, v, v, key.to_string()));
                                 state.capture(entity);
@@ -588,11 +632,15 @@ impl Widget for WichText {
                         if let Some((line, frag)) = self.active.take() {
                             if let Some(click) = self.on_click.take() {
                                 if let Some(cmd) =
-                                    self.lines[line].0[frag].cmd.take()
+                                    self.get_mut(line, frag)
+                                        .map(|f| f.cmd.take())
+                                        .flatten()
                                 {
                                     (click)(self, state, entity, line, frag, &cmd);
 
-                                    self.lines[line].0[frag].cmd = Some(cmd);
+                                    if let Some(frag) = self.get_mut(line, frag) {
+                                        frag.cmd = Some(cmd);
+                                    }
                                 }
 
                                 self.on_click = Some(click);
@@ -685,29 +733,26 @@ impl Widget for WichText {
 
         self.render = (pos.w, pos.h);
 
-        let full_h =
-            self.lines.last().map(|(_, line_h, line_y, _)| {
-                line_y + line_h
-            }).unwrap_or(0.0);
-
         let (scroll_x, scroll_y) = self.clamp_scroll(state, 0.0, 0.0);
 
         let mut y = 0.0;
-        for (line_idx, (line, line_h, line_y, align)) in self.lines.iter().enumerate() {
-            for (frag_idx, frag) in line.iter().enumerate() {
+        for (line_idx, WTLine { frags, line_h, line_y, align }) in
+            self.lines.iter().enumerate()
+        {
+            for (frag_idx, frag) in frags.iter().enumerate() {
                 let valign_offs =
                     match align {
-                        1 => ((line_h - frag.height_px) * 0.5).floor(),
-                        2 => 0.0,
-                        _ => line_h - frag.height_px,
+                        VAlign::Middle => ((line_h - frag.height_px) * 0.5).floor(),
+                        VAlign::Top    => 0.0,
+                        VAlign::Bottom => line_h - frag.height_px,
                     };
+
                 let frag_pos = Rect {
                     x: pos.x + frag.x,
                     y: pos.y + line_y + valign_offs + scroll_y,
                     w: frag.width_px,
                     h: frag.height_px,
                 };
-
 
                 let frag_pos = frag_pos.floor();
 
@@ -726,7 +771,7 @@ impl Widget for WichText {
                     self.style.block_clrs[
                         frag.color2 % self.style.block_clrs.len()];
 
-                if (self.active == self.hover || frag.value_key.is_some())
+                if (self.active == self.hover || frag.typ.is_value())
                    && self.active == Some((line_idx, frag_idx)) {
                     color = self.style.port_select_clr;
 
@@ -736,7 +781,7 @@ impl Widget for WichText {
                     color = self.style.bg_clr;
                 }
 
-                if let Some(graph_name) = &frag.graph {
+                if let FragType::Graph { key } = &frag.typ {
                     let graph_h = frag_pos.h - frag.ext_size_px.1 - 2.0;
                     let graph_w = frag_pos.w - 2.0;
                     p.rect_stroke(
@@ -748,7 +793,7 @@ impl Widget for WichText {
                         graph_h);
 
                     if let Some((gen, buf, data_src)) =
-                        self.data_sources.get_mut(graph_name)
+                        self.data_sources.get_mut(key)
                     {
                         if *gen != data_src.generation() {
                             buf.clear();
@@ -785,7 +830,7 @@ impl Widget for WichText {
                         frag.ext_size_px.1,
                         &frag.text);
 
-                } else if let Some(key) = &frag.value_key {
+                } else if let FragType::Value { key } = &frag.typ {
                     let mut buf : [u8; 15] = [0; 15];
                     let v = self.value_source.value(key);
                     let v =
@@ -866,9 +911,9 @@ impl Widget for WichText {
             }
         }
 
-        if full_h > self.render.1 {
+        if self.full_h > self.render.1 {
             let scroll_marker_h = (scroll_box.h / 20.0).floor();
-            let max_scroll = full_h - self.render.1;
+            let max_scroll = self.full_h - self.render.1;
             let marker_y =
                 (scroll_y / max_scroll)
                     // XXX: +1.0 for the extra pixel padding!
