@@ -51,6 +51,7 @@ impl VValUserData for VValBlockLanguage {
                 bt.rows        = env.arg(0).v_ik("rows") as usize;
                 bt.area_count  = env.arg(0).v_ik("area_count") as usize;
                 bt.user_input  = env.arg(0).v_bk("user_input");
+                bt.color       = env.arg(0).v_ik("color") as usize;
                 bt.inputs  = vec![];
                 bt.outputs = vec![];
                 env.arg(0).v_k("inputs").with_iter(|it| {
