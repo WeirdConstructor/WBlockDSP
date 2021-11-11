@@ -184,7 +184,7 @@ pub struct WichText {
     style:          BlockCodeStyle,
 
     new_text:       Option<String>,
-    lines:          Vec<(Vec<WTFragment>, f32, f32)>,
+    lines:          Vec<(Vec<WTFragment>, f32, f32, u8)>,
 
     zones:          Vec<(Rect, usize, usize)>,
 
@@ -275,9 +275,18 @@ impl WichText {
             let mut in_frag_start = false;
             let mut in_frag       = false;
 
+            let mut align : u8 = 0;
+
             while let Some(c) = ci.next() {
                 if in_frag_start {
                     match c {
+                        'L' => {
+                            match ci.next().unwrap_or('b') {
+                                't'     => { align = 2; },
+                                'm'     => { align = 1; },
+                                'b' | _ => { align = 0; },
+                            }
+                        },
                         'v' => {
                             let mut key = String::from("");
                             while let Some(c) = ci.peek().copied() {
@@ -451,7 +460,7 @@ impl WichText {
                 x += frag.width_px;
             }
 
-            self.lines.push((frag_line, line_h, cur_y));
+            self.lines.push((frag_line, line_h, cur_y, align));
 
             cur_y += line_h;
         }
@@ -469,7 +478,7 @@ impl WichText {
 
     fn clamp_scroll(&mut self, state: &mut State, mut dx: f32, mut dy: f32) -> (f32, f32) {
         let full_h =
-            self.lines.last().map(|(_, line_h, line_y)| {
+            self.lines.last().map(|(_, line_h, line_y, _)| {
                 line_y + line_h
             }).unwrap_or(0.0);
 
@@ -677,21 +686,28 @@ impl Widget for WichText {
         self.render = (pos.w, pos.h);
 
         let full_h =
-            self.lines.last().map(|(_, line_h, line_y)| {
+            self.lines.last().map(|(_, line_h, line_y, _)| {
                 line_y + line_h
             }).unwrap_or(0.0);
 
         let (scroll_x, scroll_y) = self.clamp_scroll(state, 0.0, 0.0);
 
         let mut y = 0.0;
-        for (line_idx, (line, line_h, line_y)) in self.lines.iter().enumerate() {
+        for (line_idx, (line, line_h, line_y, align)) in self.lines.iter().enumerate() {
             for (frag_idx, frag) in line.iter().enumerate() {
+                let valign_offs =
+                    match align {
+                        1 => ((line_h - frag.height_px) * 0.5).floor(),
+                        2 => 0.0,
+                        _ => line_h - frag.height_px,
+                    };
                 let frag_pos = Rect {
                     x: pos.x + frag.x,
-                    y: pos.y + line_y + scroll_y,
+                    y: pos.y + line_y + valign_offs + scroll_y,
                     w: frag.width_px,
                     h: frag.height_px,
                 };
+
 
                 let frag_pos = frag_pos.floor();
 

@@ -595,7 +595,9 @@ pub fn main() {
                         text += &format!("   * [ac{}:TitleClr={}]\n", clr, clr);
                     }
 
-                    text += "And some active values: [c14f9ah20vF: F ][aw40h40vVOL:Volume][vDLY:Delay]\n";
+                    text += "[Lm:Middle ]And some active values: [c14f9ah20vF: F ][aw40h40vVOL:Volume][vDLY:Delay]\n";
+                    text += "[Lt:Top    ]And some active values: [c14f9ah20vF: F ][aw40h40vVOL:Volume][vDLY:Delay]\n";
+                    text += "[Lb:Bottom ]And some active values: [c14f9ah20vF: F ][aw40h40vVOL:Volume][vDLY:Delay]\n";
                     text += "[c6aw100h100vBig:Big Knob";
 
                     for l in 0..10 {
