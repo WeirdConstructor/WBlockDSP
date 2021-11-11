@@ -103,8 +103,7 @@ impl BlockASTNode for ASTNodeRef {
 }
 
 pub fn gen_code(code: &mut BlockFun) {
-    let mut tree = code.generate_tree::<ASTNodeRef>("zero").unwrap();
-
+    let tree = code.generate_tree::<ASTNodeRef>("zero").unwrap();
     tree.walk_dump("", "", 0);
 }
 
@@ -276,13 +275,13 @@ pub fn main() {
         });
     }
 
-    code.borrow_mut().instanciate_at(0, 1, 1, "number", Some("2.32".to_string()));
-    code.borrow_mut().instanciate_at(0, 2, 3, "number", Some("1.0".to_string()));
-    code.borrow_mut().instanciate_at(0, 2, 2, "number", Some("-1.0".to_string()));
-    code.borrow_mut().instanciate_at(0, 2, 1, "number", Some("0.5".to_string()));
-    code.borrow_mut().instanciate_at(0, 3, 3, "+", None);
-    code.borrow_mut().instanciate_at(0, 4, 3, "->3", None);
-    code.borrow_mut().instanciate_at(0, 2, 6, "if", None);
+    let _ = code.borrow_mut().instanciate_at(0, 1, 1, "number", Some("2.32".to_string()));
+    let _ = code.borrow_mut().instanciate_at(0, 2, 3, "number", Some("1.0".to_string()));
+    let _ = code.borrow_mut().instanciate_at(0, 2, 2, "number", Some("-1.0".to_string()));
+    let _ = code.borrow_mut().instanciate_at(0, 2, 1, "number", Some("0.5".to_string()));
+    let _ = code.borrow_mut().instanciate_at(0, 3, 3, "+", None);
+    let _ = code.borrow_mut().instanciate_at(0, 4, 3, "->3", None);
+    let _ = code.borrow_mut().instanciate_at(0, 2, 6, "if", None);
 
     // TODO: Subroutines:
     //  - make predefined subroutines with nargs=0..4 and one output.
@@ -318,9 +317,9 @@ pub fn main() {
 
                 spawn_button(state, pop_col, pop, "+", current_pos.clone(), {
                     let code = code.clone();
-                        move |state, pos| {
+                        move |_state, pos| {
                         let (id, x, y) = pos.pos();
-                        code.borrow_mut()
+                        let _ = code.borrow_mut()
                             .instanciate_at(id, x, y, "+", None);
                         code.borrow_mut()
                             .recalculate_area_sizes();
@@ -329,9 +328,9 @@ pub fn main() {
                     }});
                 spawn_button(state, pop_col, pop, "-", current_pos.clone(), {
                     let code = code.clone();
-                        move |state, pos| {
+                        move |_state, pos| {
                         let (id, x, y) = pos.pos();
-                        code.borrow_mut()
+                        let _ = code.borrow_mut()
                             .instanciate_at(id, x, y, "-", None);
                         code.borrow_mut()
                             .recalculate_area_sizes();
@@ -340,9 +339,9 @@ pub fn main() {
                     }});
                 spawn_button(state, pop_col, pop, "*", current_pos.clone(), {
                     let code = code.clone();
-                        move |state, pos| {
+                        move |_state, pos| {
                         let (id, x, y) = pos.pos();
-                        code.borrow_mut()
+                        let _ = code.borrow_mut()
                             .instanciate_at(id, x, y, "*", None);
                         code.borrow_mut()
                             .recalculate_area_sizes();
@@ -351,9 +350,9 @@ pub fn main() {
                     }});
                 spawn_button(state, pop_col, pop, "/", current_pos.clone(), {
                     let code = code.clone();
-                        move |state, pos| {
+                        move |_state, pos| {
                         let (id, x, y) = pos.pos();
-                        code.borrow_mut()
+                        let _ = code.borrow_mut()
                             .instanciate_at(id, x, y, "/", None);
                         code.borrow_mut()
                             .recalculate_area_sizes();
@@ -362,9 +361,9 @@ pub fn main() {
                     }});
                 spawn_button(state, pop_col, pop, "if", current_pos.clone(), {
                     let code = code.clone();
-                        move |state, pos| {
+                        move |_state, pos| {
                         let (id, x, y) = pos.pos();
-                        code.borrow_mut()
+                        let _ = code.borrow_mut()
                             .instanciate_at(id, x, y, "if", None);
                         code.borrow_mut()
                             .recalculate_area_sizes();
@@ -373,9 +372,9 @@ pub fn main() {
                     }});
                 spawn_button(state, pop_col, pop, "->", current_pos.clone(), {
                     let code = code.clone();
-                        move |state, pos| {
+                        move |_state, pos| {
                         let (id, x, y) = pos.pos();
-                        code.borrow_mut()
+                        let _ = code.borrow_mut()
                             .instanciate_at(id, x, y, "->", None);
                         code.borrow_mut()
                             .recalculate_area_sizes();
@@ -384,9 +383,9 @@ pub fn main() {
                     }});
                 spawn_button(state, pop_col, pop, "->2", current_pos.clone(), {
                     let code = code.clone();
-                        move |state, pos| {
+                        move |_state, pos| {
                         let (id, x, y) = pos.pos();
-                        code.borrow_mut()
+                        let _ = code.borrow_mut()
                             .instanciate_at(id, x, y, "->2", None);
                         code.borrow_mut()
                             .recalculate_area_sizes();
@@ -395,9 +394,9 @@ pub fn main() {
                     }});
                 spawn_button(state, pop_col, pop, "->3", current_pos.clone(), {
                     let code = code.clone();
-                        move |state, pos| {
+                        move |_state, pos| {
                         let (id, x, y) = pos.pos();
-                        code.borrow_mut()
+                        let _ = code.borrow_mut()
                             .instanciate_at(id, x, y, "->3", None);
                         code.borrow_mut()
                             .recalculate_area_sizes();
@@ -406,9 +405,9 @@ pub fn main() {
                     }});
                 spawn_button(state, pop_col, pop, "set: x", current_pos.clone(), {
                     let code = code.clone();
-                        move |state, pos| {
+                        move |_state, pos| {
                         let (id, x, y) = pos.pos();
-                        code.borrow_mut()
+                        let _ = code.borrow_mut()
                             .instanciate_at(id, x, y, "set", Some("x".to_string()));
                         code.borrow_mut()
                             .recalculate_area_sizes();
@@ -417,9 +416,9 @@ pub fn main() {
                     }});
                 spawn_button(state, pop_col, pop, "get: x", current_pos.clone(), {
                     let code = code.clone();
-                        move |state, pos| {
+                        move |_state, pos| {
                         let (id, x, y) = pos.pos();
-                        code.borrow_mut()
+                        let _ = code.borrow_mut()
                             .instanciate_at(id, x, y, "get", Some("x".to_string()));
                         code.borrow_mut()
                             .recalculate_area_sizes();
@@ -428,9 +427,9 @@ pub fn main() {
                     }});
                 spawn_button(state, pop_col, pop, "sin", current_pos.clone(), {
                     let code = code.clone();
-                        move |state, pos| {
+                        move |_state, pos| {
                         let (id, x, y) = pos.pos();
-                        code.borrow_mut()
+                        let _ = code.borrow_mut()
                             .instanciate_at(id, x, y, "sin", None);
                         code.borrow_mut()
                             .recalculate_area_sizes();
@@ -439,9 +438,9 @@ pub fn main() {
                     }});
                 spawn_button(state, pop_col, pop, "1pole", current_pos.clone(), {
                     let code = code.clone();
-                        move |state, pos| {
+                        move |_state, pos| {
                         let (id, x, y) = pos.pos();
-                        code.borrow_mut()
+                        let _ = code.borrow_mut()
                             .instanciate_at(id, x, y, "1pole", None);
                         code.borrow_mut()
                             .recalculate_area_sizes();
@@ -450,9 +449,9 @@ pub fn main() {
                     }});
                 spawn_button(state, pop_col, pop, "svf", current_pos.clone(), {
                     let code = code.clone();
-                        move |state, pos| {
+                        move |_state, pos| {
                         let (id, x, y) = pos.pos();
-                        code.borrow_mut()
+                        let _ = code.borrow_mut()
                             .instanciate_at(id, x, y, "svf", None);
                         code.borrow_mut()
                             .recalculate_area_sizes();
@@ -461,9 +460,9 @@ pub fn main() {
                     }});
                 spawn_button(state, pop_col, pop, "delay", current_pos.clone(), {
                     let code = code.clone();
-                        move |state, pos| {
+                        move |_state, pos| {
                         let (id, x, y) = pos.pos();
-                        code.borrow_mut()
+                        let _ = code.borrow_mut()
                             .instanciate_at(id, x, y, "delay", None);
                         code.borrow_mut()
                             .recalculate_area_sizes();
@@ -499,7 +498,7 @@ pub fn main() {
                     BlockCode::new(style.clone())
                         .on_click({
                             let code = code.clone();
-                            move |_, state, e, pos, btn| {
+                            move |_, state, _e, pos, btn| {
                                 (*current_pos.borrow_mut()) = pos;
 
                                 if let BlockPos::Block { row, col, .. } = pos {
@@ -511,11 +510,11 @@ pub fn main() {
                                             .shift_port(id, x, y, row, col == 1);
                                     } else {
                                         if col == 1 {
-                                            code.borrow_mut()
+                                            let _ = code.borrow_mut()
                                                 .split_block_chain_after(
                                                     id, x, y, Some("->"));
                                         } else {
-                                            code.borrow_mut()
+                                            let _ = code.borrow_mut()
                                                 .split_block_chain_after(
                                                     id, x - 1, y, None);
                                         }
@@ -536,7 +535,7 @@ pub fn main() {
                         })
                         .on_drag({
                             let code = code.clone();
-                            move |_, state, e, pos, pos2, btn| {
+                            move |_, _state, _e, pos, pos2, btn| {
                                 let (id, x, y)    = pos.pos();
                                 let (id2, x2, y2) = pos2.pos();
 
@@ -544,7 +543,7 @@ pub fn main() {
 
                                 if let BlockPos::Cell { .. } = pos {
                                     if let BlockPos::Block { .. } = pos2 {
-                                        code.borrow_mut()
+                                        let _ = code.borrow_mut()
                                             .clone_block_from_to(
                                                 id2, x2, y2, id, x, y);
                                         code.borrow_mut()
@@ -554,15 +553,15 @@ pub fn main() {
                                     }
                                 } else {
                                     if btn == MouseButton::Right {
-                                        code.borrow_mut()
+                                        let _ = code.borrow_mut()
                                             .move_block_from_to(
                                                 id, x, y, id2, x2, y2);
                                     } else {
                                         if pos.pos() == pos2.pos() {
-                                            code.borrow_mut()
+                                            let _ = code.borrow_mut()
                                                 .remove_at(id, x, y);
                                         } else {
-                                            code.borrow_mut()
+                                            let _ = code.borrow_mut()
                                                 .move_block_chain_from_to(
                                                     id, x, y, id2, x2, y2);
                                         }
@@ -643,7 +642,7 @@ pub fn main() {
 
                 let wt =
                     WichText::new(style)
-                        .on_click(|_wid, state, ent, line, frag, cmd| {
+                        .on_click(|_wid, state, ent, _line, _frag, cmd| {
                             println!("CLICK: [{}]", cmd);
                             let parts : Vec<&str> = cmd.split("=").collect();
 
@@ -658,6 +657,12 @@ pub fn main() {
                         .build(state, row, |builder| { builder });
 
                 set_text(state, wt, 0);
+
+                let values = Rc::new(RefCell::new(std::collections::HashMap::new()));
+                state.insert_event(
+                    Event::new(
+                        WichTextMessage::SetValueSource(values))
+                    .target(wt));
 
                 state.add_theme(STYLE);
 

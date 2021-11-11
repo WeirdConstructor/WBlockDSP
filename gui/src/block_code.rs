@@ -22,17 +22,17 @@ impl DummyBlockCode {
 }
 
 impl BlockCodeView for DummyBlockCode {
-    fn area_header(&self, id: usize) -> Option<&str> { None }
+    fn area_header(&self, _id: usize) -> Option<&str> { None }
 
-    fn area_size(&self, id: usize) -> (usize, usize) {
+    fn area_size(&self, _id: usize) -> (usize, usize) {
         (16, 16)
     }
 
-    fn block_at(&self, id: usize, x: i64, y: i64) -> Option<&dyn BlockView> {
+    fn block_at(&self, _id: usize, _x: i64, _y: i64) -> Option<&dyn BlockView> {
         None
     }
 
-    fn origin_at(&self, id: usize, x: i64, y: i64) -> Option<(i64, i64)> {
+    fn origin_at(&self, _id: usize, _x: i64, _y: i64) -> Option<(i64, i64)> {
         None
     }
 }
@@ -48,6 +48,7 @@ pub enum BlockPos {
     Cell  { id: usize, x: i64, y: i64 },
 }
 
+#[allow(dead_code)]
 impl BlockPos {
     pub fn area_id(&self) -> usize {
         match self {
@@ -101,10 +102,10 @@ pub struct BlockCode {
     shift_offs:     (f32, f32),
     tmp_shift_offs: Option<(f32, f32)>,
 
-    on_expand:      Option<Box<dyn Fn(&mut Self, &mut State, Entity, usize)>>,
+//    on_expand:      Option<Box<dyn Fn(&mut Self, &mut State, Entity, usize)>>,
     on_click:       Option<Box<dyn Fn(&mut Self, &mut State, Entity, BlockPos, MouseButton)>>,
     on_drag:        Option<Box<dyn Fn(&mut Self, &mut State, Entity, BlockPos, BlockPos, MouseButton)>>,
-    on_hover:       Option<Box<dyn Fn(&mut Self, &mut State, Entity, bool, usize)>>,
+//    on_hover:       Option<Box<dyn Fn(&mut Self, &mut State, Entity, bool, usize)>>,
 }
 
 impl BlockCode {
@@ -125,21 +126,21 @@ impl BlockCode {
             shift_offs:     (0.0, 0.0),
             tmp_shift_offs: None,
 
-            on_expand:      None,
+//            on_expand:      None,
             on_click:       None,
             on_drag:        None,
-            on_hover:       None,
+//            on_hover:       None,
         }
     }
 
-    pub fn on_expand<F>(mut self, on_expand: F) -> Self
-    where
-        F: 'static + Fn(&mut Self, &mut State, Entity, usize),
-    {
-        self.on_expand = Some(Box::new(on_expand));
-
-        self
-    }
+//    pub fn on_expand<F>(mut self, on_expand: F) -> Self
+//    where
+//        F: 'static + Fn(&mut Self, &mut State, Entity, usize),
+//    {
+//        self.on_expand = Some(Box::new(on_expand));
+//
+//        self
+//    }
 
     pub fn on_click<F>(mut self, on_click: F) -> Self
     where
@@ -159,14 +160,14 @@ impl BlockCode {
         self
     }
 
-    pub fn on_hover<F>(mut self, on_hover: F) -> Self
-    where
-        F: 'static + Fn(&mut Self, &mut State, Entity, bool, usize),
-    {
-        self.on_hover = Some(Box::new(on_hover));
-
-        self
-    }
+//    pub fn on_hover<F>(mut self, on_hover: F) -> Self
+//    where
+//        F: 'static + Fn(&mut Self, &mut State, Entity, bool, usize),
+//    {
+//        self.on_hover = Some(Box::new(on_hover));
+//
+//        self
+//    }
 
     pub fn reset_areas(&mut self) {
         for a in self.areas.iter_mut() {
@@ -457,7 +458,6 @@ impl BlockCode {
         for cont_area in next_areas.into_iter() {
             let (cont_id, pos, border_color, bg_color) = cont_area;
 
-            let (area_w, area_h) = self.code.borrow().area_size(cont_id);
             let apos = Rect {
                 x: pos.x + area_border_px,
                 y: pos.y + area_border_px,
@@ -686,8 +686,6 @@ impl Widget for BlockCode {
                                 .target(Entity::root()));
                     } else {
                         let old_hover = self.hover;
-                        let mut found = false;
-
                         self.hover = self.find_area_at_mouse(*x, *y);
 
                         if old_hover != self.hover {

@@ -5,7 +5,6 @@
 use crate::painter::*;
 use crate::rect::*;
 use crate::block_code_style::*;
-use wblockdsp::{BlockView, BlockCodeView};
 
 use tuix::*;
 use femtovg::FontId;
@@ -41,11 +40,11 @@ impl WichTextValueSource for RefCell<HashMap<String, (f32, f32, u8)>> {
         }
     }
 
-    fn map_knob(&self, key: &str, v: f32) -> f32 {
+    fn map_knob(&self, _key: &str, v: f32) -> f32 {
         v.clamp(0.0, 1.0)
     }
 
-    fn clamp(&self, key: &str, v: f32) -> f32 {
+    fn clamp(&self, _key: &str, v: f32) -> f32 {
         v.clamp(0.0, 1.0)
     }
 
@@ -66,15 +65,7 @@ impl WichTextValueSource for RefCell<HashMap<String, (f32, f32, u8)>> {
                 *prec
             } else { 2 };
 
-        match (match prec {
-            0 => write!(bw, "{:5.0}", v),
-            1 => write!(bw, "{:5.1}", v),
-            2 => write!(bw, "{:5.2}", v),
-            3 => write!(bw, "{:5.3}", v),
-            4 => write!(bw, "{:6.4}", v),
-            5 => write!(bw, "{:7.5}", v),
-            _ => write!(bw, "{:8.6}", v),
-        }) {
+        match write!(bw, "{:5.prec$}", v, prec = prec as usize) {
             Ok(_) => bw.buffer().len(),
             _     => 0,
         }
@@ -256,7 +247,7 @@ impl WTFragment {
                 let factor = knob_h / 40.0;
 
                 if knob_h > 10.0 {
-                    let r = (knob_h - (10.0 * factor));
+                    let r = knob_h - (10.0 * factor);
                     p.arc_stroke(1.0, orig_color, r * 0.5,
                         std::f32::consts::PI * 0.6,
                         std::f32::consts::PI * (0.6 + 1.8),
@@ -338,7 +329,7 @@ impl WTLine {
 
     fn add(&mut self, frag: WTFragment) { self.frags.push(frag); }
 
-    fn finish(&mut self, default_h: f32, y: f32) -> f32 {
+    fn finish(&mut self, align: VAlign, default_h: f32, y: f32) -> f32 {
         let mut line_h = default_h;
         let mut x      = 0.0;
 
@@ -348,6 +339,7 @@ impl WTLine {
             x += frag.width_px;
         }
 
+        self.align  = align;
         self.line_h = line_h;
         self.line_y = y;
 
@@ -419,7 +411,6 @@ pub struct WichText {
     hover:          Option<(usize, usize)>,
     active:         Option<(usize, usize)>,
     drag:           Option<(f32, f32, f32, f32, f32, String)>,
-    drag_delta:     Option<f32>,
 
     scroll:         (f32, f32),
     render:         (f32, f32),
@@ -429,8 +420,8 @@ pub struct WichText {
     value_source:   Rc<dyn WichTextValueSource>,
 
     on_click:       Option<Box<dyn Fn(&mut Self, &mut State, Entity, usize, usize, &str)>>,
-    on_value:       Option<Box<dyn Fn(&mut Self, &mut State, Entity, usize, usize, &str, f32)>>,
-    on_hover:       Option<Box<dyn Fn(&mut Self, &mut State, Entity, bool, usize)>>,
+//    on_value:       Option<Box<dyn Fn(&mut Self, &mut State, Entity, usize, usize, &str, f32)>>,
+//    on_hover:       Option<Box<dyn Fn(&mut Self, &mut State, Entity, bool, usize)>>,
 }
 
 fn parse_key(ci: &mut Peekable<Chars<'_>>) -> String {
@@ -483,11 +474,10 @@ impl WichText {
             hover:          None,
             active:         None,
             drag:           None,
-            drag_delta:     None,
 
             on_click:       None,
-            on_value:       None,
-            on_hover:       None,
+//            on_value:       None,
+//            on_hover:       None,
         }
 
     }
@@ -501,23 +491,23 @@ impl WichText {
         self
     }
 
-    pub fn on_value<F>(mut self, on_value: F) -> Self
-    where
-        F: 'static + Fn(&mut Self, &mut State, Entity, usize, usize, &str, f32),
-    {
-        self.on_value = Some(Box::new(on_value));
-
-        self
-    }
-
-    pub fn on_hover<F>(mut self, on_hover: F) -> Self
-    where
-        F: 'static + Fn(&mut Self, &mut State, Entity, bool, usize),
-    {
-        self.on_hover = Some(Box::new(on_hover));
-
-        self
-    }
+//    pub fn on_value<F>(mut self, on_value: F) -> Self
+//    where
+//        F: 'static + Fn(&mut Self, &mut State, Entity, usize, usize, &str, f32),
+//    {
+//        self.on_value = Some(Box::new(on_value));
+//
+//        self
+//    }
+//
+//    pub fn on_hover<F>(mut self, on_hover: F) -> Self
+//    where
+//        F: 'static + Fn(&mut Self, &mut State, Entity, bool, usize),
+//    {
+//        self.on_hover = Some(Box::new(on_hover));
+//
+//        self
+//    }
 
     fn parse(&mut self, p: &mut FemtovgPainter, text: &str) {
         self.lines.clear();
@@ -532,17 +522,13 @@ impl WichText {
             let mut in_frag_start = false;
             let mut in_frag       = false;
 
-            let mut align : u8 = 0;
+            let mut align : VAlign = VAlign::Bottom;
 
             while let Some(c) = ci.next() {
                 if in_frag_start {
                     match c {
                         'L' => {
-                            match ci.next().unwrap_or('b') {
-                                't'     => { align = 2; },
-                                'm'     => { align = 1; },
-                                'b' | _ => { align = 0; },
-                            }
+                            align = VAlign::from_char(ci.next().unwrap_or('b'));
                         },
                         'v' => {
                             let key = parse_key(&mut ci);
@@ -651,8 +637,8 @@ impl WichText {
             }
 
 
-            let mut default_font_h = p.font_height(self.style.font_size, true);
-            let line_h = frag_line.finish(default_font_h, cur_y);
+            let default_font_h = p.font_height(self.style.font_size, true);
+            let line_h = frag_line.finish(align, default_font_h, cur_y);
             self.lines.push(frag_line);
 
             cur_y += line_h;
@@ -685,7 +671,7 @@ impl WichText {
     }
 
     fn drag_val(&self, mouse_y: f32) -> f32 {
-        if let Some((_ox, oy, step, val, tmp, _key)) = &self.drag {
+        if let Some((_ox, oy, step, val, _tmp, _key)) = &self.drag {
             val + ((oy - mouse_y) / 20.0) * step
         } else {
             0.0
@@ -829,7 +815,7 @@ impl Widget for WichText {
 
                     let d_val = self.drag_val(*y);
 
-                    if let Some((_ox, _oy, _step, _val, tmp, key)) =
+                    if let Some((_ox, _oy, _step, _val, tmp, _key)) =
                         self.drag.as_mut()
                     {
                         *tmp = d_val;
@@ -889,7 +875,7 @@ impl Widget for WichText {
 
         self.render = (pos.w, pos.h);
 
-        let (scroll_x, scroll_y) = self.clamp_scroll(state, 0.0, 0.0);
+        let (_scroll_x, scroll_y) = self.clamp_scroll(state, 0.0, 0.0);
 
         let val_src = self.value_source.clone();
         let drag = self.drag.clone();
@@ -912,7 +898,6 @@ impl Widget for WichText {
                 (val_s, knb_v)
             });
 
-        let mut y = 0.0;
         for (line_idx, WTLine { frags, line_h, line_y, align }) in
             self.lines.iter().enumerate()
         {
@@ -944,7 +929,7 @@ impl Widget for WichText {
                         frag.color % self.style.block_clrs.len()];
                 let orig_color = color;
 
-                let mut color2 =
+                let color2 =
                     self.style.block_clrs[
                         frag.color2 % self.style.block_clrs.len()];
 

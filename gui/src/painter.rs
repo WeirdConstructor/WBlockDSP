@@ -100,6 +100,7 @@ impl<'a> FemtovgPainter<'a> {
     }
 }
 
+#[allow(dead_code)]
 impl<'a> FemtovgPainter<'a> {
     pub fn clip_region(&mut self, x: f32, y: f32, w: f32, h: f32) {
         self.canvas.save();
@@ -279,6 +280,7 @@ impl<'a> FemtovgPainter<'a> {
     }
 }
 
+#[allow(dead_code)]
 pub fn calc_font_size_from_text(
     p: &mut FemtovgPainter,
     txt: &str,
