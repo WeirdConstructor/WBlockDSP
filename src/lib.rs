@@ -2,6 +2,7 @@ use wlambda::*;
 mod jit;
 mod block_view;
 mod block_lang;
+pub mod wlapi;
 
 pub use block_view::*;
 pub use block_lang::*;

@@ -1,5 +1,6 @@
 use tuix::*;
 use tuix::widgets::*;
+use wlambda::*;
 
 mod painter;
 mod rect;
@@ -12,6 +13,7 @@ use block_code::*;
 use wichtext::*;
 
 use wblockdsp::{BlockFun, BlockLanguage, BlockType, BlockASTNode};
+use wblockdsp::wlapi::*;
 
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -105,6 +107,22 @@ impl BlockASTNode for ASTNodeRef {
 pub fn gen_code(code: &mut BlockFun) {
     let tree = code.generate_tree::<ASTNodeRef>("zero").unwrap();
     tree.walk_dump("", "", 0);
+}
+
+
+pub fn exec_cb(
+    wl_ctx:     Rc<RefCell<EvalContext>>,
+    callback:   VVal,
+    args:       &[VVal]
+) {
+    if callback.is_none() {
+        return;
+    }
+
+    match wl_ctx.borrow_mut().call(&callback, args) {
+        Ok(_)  => {},
+        Err(e) => { panic!("Error in callback: {:?}", e); }
+    }
 }
 
 pub fn main() {
@@ -293,6 +311,27 @@ pub fn main() {
     //  - you can add a name to the subroutine.
     //  - when cloning a subroutine, a "call" is created.
     //    the label will contain the subroutine name.
+
+    // let vizia_st = setup_vizia_module(gui_rec.clone());
+    // global_env.borrow_mut().set_module("vizia", vizia_st);
+
+    let global_env = wlambda::GlobalEnv::new_default();
+    let wl_ctx     = wlambda::EvalContext::new(global_env.clone());
+    let wl_ctx     = Rc::new(RefCell::new(wl_ctx));
+
+    match wl_ctx.borrow_mut().eval_file("wllib/main.wl") {
+        Ok(_) => { },
+        Err(e) => { panic!("Error in main.wl:\n{}", e); }
+    }
+
+    let init_fun =
+        wl_ctx.borrow_mut().get_global_var("init")
+           .expect("global 'init' function in main.wl defined");
+
+    match wl_ctx.borrow_mut().call(&init_fun, &[]) {
+        Ok(_) => {},
+        Err(e) => { panic!("Error in main.wl 'init':\n{}", e); }
+    }
 
     let app =
         Application::new(
@@ -596,7 +635,7 @@ pub fn main() {
 
                     text += "[Lm:Middle ]And some active values: [c14f9ah20vF: F ][aw40h40vVOL:Volume][vDLY:Delay]\n";
                     text += "[Lt:Top    ]And some active values: [c14f9ah20vF: F ][aw40h40vVOL:Volume][vDLY:Delay]\n";
-                    text += "[Lb:Bottom ]And some active values: [c14f9ah20vF: F ][aw40h40vVOL:Volume][vDLY:Delay]\n";
+                    text += "[Lb:Bottom ]And some active values: [c14f9ah20vF: F ][aw40h40vVOL:Volume][avDLY:Delay]\n";
                     text += "[c6aw100h100vBig:Big Knob";
 
                     for l in 0..10 {
