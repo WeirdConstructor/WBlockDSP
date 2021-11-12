@@ -346,7 +346,11 @@ impl WTLine {
             }
 
             w += frag.width_px;
-            next_space_w = frag.space_px;
+            if frag.width_px > 0.1 {
+                next_space_w = frag.space_px;
+            } else {
+                next_space_w = 0.0;
+            }
         }
 
         if let Some(frag) = tail_frag {
@@ -366,16 +370,19 @@ impl WTLine {
         let mut next_space_w = 0.0;
 
         for frag in &mut self.frags {
-            if x > 0.1 {
-                if wrap {
-                    x += next_space_w;
-                }
+            if x > 0.1 && wrap {
+                x += next_space_w;
             }
 
             line_h = line_h.max(frag.height_px);
             frag.x = x;
+
             x += frag.width_px;
-            next_space_w = frag.space_px;
+            if frag.width_px > 0.1 {
+                next_space_w = frag.space_px;
+            } else {
+                next_space_w = 0.0;
+            }
         }
 
         self.wrap   = wrap;
