@@ -97,11 +97,39 @@ impl Widget for BlockCodeEditor {
 
         entity.set_element(state, "block_code_editor");
 
-        let pop = Popup::new().build(state, entity, |builder| {
+        let pop = Popup::new().build(state, Entity::root(), |builder| {
             builder
                 .set_width(Pixels(100.0))
                 .set_height(Pixels(430.0))
         });
+
+        let add_block_item =
+            Rc::new({
+                let code        = self.code.clone();
+                let current_pos = self.current_pos.clone();
+
+                move |state: &mut State, typ: &str| {
+                    let (id, x, y) = current_pos.borrow().pos();
+
+                    let _ = code.borrow_mut()
+                        .instanciate_at(id, x, y, typ, None);
+
+                    println!("DOOOO {:?}", current_pos.borrow());
+
+                    code.borrow_mut()
+                        .recalculate_area_sizes();
+
+                    state.insert_event(
+                        Event::new(PopupEvent::Close)
+                        .target(pop)
+                        .origin(Entity::root()));
+                }
+            });
+
+        Button::with_label("-")
+            .on_release({ let abi = add_block_item.clone();
+                move |_, state, _| { (*add_block_item)(state, "-"); } })
+            .build(state, pop, |builder| builder);
 
         let pop_col = Column::new().build(state, pop, |builder| builder);
 
@@ -200,7 +228,9 @@ impl Widget for BlockCodeEditor {
                 })
                 .build(state, entity, |builder| { builder });
 
-
+        state.insert_event(
+            Event::new(BlockCodeMessage::SetCode(self.code.clone()))
+            .target(bc));
 
         entity
     }
