@@ -764,6 +764,26 @@ impl BlockArea {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BlockUserInput {
+    None,
+    Float,
+    Integer,
+    Identifier,
+    ClientDecision,
+}
+
+impl Default for BlockUserInput {
+    fn default() -> Self { Self::None }
+}
+
+impl BlockUserInput {
+    pub fn needs_input(&self) -> bool {
+        *self != BlockUserInput::None
+    }
+}
+
+
 #[derive(Debug, Clone, Default)]
 pub struct BlockType {
     pub category:       String,
@@ -772,7 +792,7 @@ pub struct BlockType {
     pub inputs:         Vec<Option<String>>,
     pub outputs:        Vec<Option<String>>,
     pub area_count:     usize,
-    pub user_input:     bool,
+    pub user_input:     BlockUserInput,
     pub description:    String,
     pub color:          usize,
 }
@@ -827,7 +847,7 @@ impl BlockLanguage {
         self.types.insert(typ.name.clone(), typ);
     }
 
-    pub fn get_type_list(&self) -> Vec<(String, String, bool)> {
+    pub fn get_type_list(&self) -> Vec<(String, String, BlockUserInput)> {
         let mut out = vec![];
         for (_, typ) in &self.types {
             out.push((typ.category.clone(), typ.name.clone(), typ.user_input));

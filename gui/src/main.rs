@@ -17,7 +17,7 @@ use wichtext::*;
 
 use block_code_style::BlockCodeStyle;
 
-use wblockdsp::{BlockFun, BlockLanguage, BlockType, BlockASTNode};
+use wblockdsp::{BlockFun, BlockLanguage, BlockType, BlockASTNode, BlockUserInput};
 use wblockdsp::wlapi::*;
 
 use std::rc::Rc;
@@ -111,7 +111,7 @@ pub fn main() {
         inputs:         vec![],
         outputs:        vec![Some("".to_string())],
         area_count:     0,
-        user_input:     false,
+        user_input:     BlockUserInput::None,
         description:    "The 0.0 value".to_string(),
         color:          1,
     });
@@ -123,7 +123,7 @@ pub fn main() {
         inputs:         vec![],
         outputs:        vec![Some("".to_string())],
         area_count:     0,
-        user_input:     true,
+        user_input:     BlockUserInput::Float,
         description:    "A literal value, typed in by the user.".to_string(),
         color:          1,
     });
@@ -135,7 +135,7 @@ pub fn main() {
         inputs:         vec![Some("".to_string())],
         outputs:        vec![Some("".to_string())],
         area_count:     0,
-        user_input:     false,
+        user_input:     BlockUserInput::None,
         description:    "Forwards the value one block".to_string(),
         color:          6,
     });
@@ -147,7 +147,7 @@ pub fn main() {
         inputs:         vec![Some("".to_string())],
         outputs:        vec![Some("".to_string()), Some("".to_string())],
         area_count:     0,
-        user_input:     false,
+        user_input:     BlockUserInput::None,
         description:    "Forwards the value one block and sends it to multiple destinations".to_string(),
         color:          6,
     });
@@ -159,7 +159,7 @@ pub fn main() {
         inputs:         vec![Some("".to_string())],
         outputs:        vec![Some("".to_string()), Some("".to_string()), Some("".to_string())],
         area_count:     0,
-        user_input:     false,
+        user_input:     BlockUserInput::None,
         description:    "Forwards the value one block and sends it to multiple destinations".to_string(),
         color:          6,
     });
@@ -171,7 +171,7 @@ pub fn main() {
         inputs:         vec![Some("".to_string())],
         outputs:        vec![],
         area_count:     0,
-        user_input:     true,
+        user_input:     BlockUserInput::Identifier,
         description:    "Stores into a variable".to_string(),
         color:          2,
     });
@@ -183,7 +183,7 @@ pub fn main() {
         inputs:         vec![],
         outputs:        vec![Some("".to_string())],
         area_count:     0,
-        user_input:     true,
+        user_input:     BlockUserInput::Identifier,
         description:    "Loads a variable".to_string(),
         color:          12,
     });
@@ -195,7 +195,7 @@ pub fn main() {
         inputs:         vec![Some("".to_string())],
         outputs:        vec![Some("".to_string())],
         area_count:     2,
-        user_input:     false,
+        user_input:     BlockUserInput::None,
         description:    "Divides the controlflow based on a true (>= 0.5) \
                          or false (< 0.5) input value.".to_string(),
         color:          0,
@@ -208,7 +208,7 @@ pub fn main() {
         inputs:         vec![Some("in".to_string()), Some("f".to_string())],
         outputs:        vec![Some("lp".to_string()), Some("hp".to_string())],
         area_count:     0,
-        user_input:     false,
+        user_input:     BlockUserInput::None,
         description:    "Runs a simple one pole filter on the input".to_string(),
         color:          8,
     });
@@ -220,7 +220,7 @@ pub fn main() {
         inputs:         vec![Some("in".to_string()), Some("f".to_string()), Some("r".to_string())],
         outputs:        vec![Some("lp".to_string()), Some("bp".to_string()), Some("hp".to_string())],
         area_count:     0,
-        user_input:     false,
+        user_input:     BlockUserInput::None,
         description:    "Runs a state variable filter on the input".to_string(),
         color:          8,
     });
@@ -232,7 +232,7 @@ pub fn main() {
         inputs:         vec![Some("".to_string())],
         outputs:        vec![Some("".to_string())],
         area_count:     0,
-        user_input:     false,
+        user_input:     BlockUserInput::None,
         description:    "Calculates the sine of the input".to_string(),
         color:          16,
     });
@@ -244,7 +244,7 @@ pub fn main() {
         inputs:         vec![Some("in".to_string()), Some("t".to_string())],
         outputs:        vec![Some("".to_string())],
         area_count:     0,
-        user_input:     false,
+        user_input:     BlockUserInput::None,
         description:    "Runs a linearly interpolated delay on the input".to_string(),
         color:          8,
     });
@@ -262,7 +262,7 @@ pub fn main() {
                 },
             outputs:        vec![Some("".to_string())],
             area_count:     0,
-            user_input:     false,
+            user_input:     BlockUserInput::None,
             description:    "A binary arithmetics operation".to_string(),
             color:          4,
         });

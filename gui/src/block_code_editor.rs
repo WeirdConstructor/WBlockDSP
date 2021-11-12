@@ -8,7 +8,13 @@ use crate::block_code::*;
 use tuix::*;
 use tuix::widgets::*;
 
-use wblockdsp::{BlockFun, BlockLanguage, BlockType, BlockASTNode};
+use wblockdsp::{
+    BlockFun,
+    BlockLanguage,
+    BlockType,
+    BlockASTNode,
+    BlockUserInput,
+};
 use wblockdsp::wlapi::*;
 
 use std::rc::Rc;
@@ -35,6 +41,11 @@ const STYLE: &str = r#"
     .block_selector {
         width: 500px;
         height: 200px;
+    }
+
+    .block_input {
+        width: 100px;
+        height: 30px;
     }
 "#;
 
@@ -67,7 +78,8 @@ pub struct BlockCodeEditor {
 
     category_order: Vec<String>,
 
-    on_change:   Option<Box<dyn Fn(&mut Self, &mut State, Entity, Rc<RefCell<BlockFun>>)>>,
+    on_query_input: Rc<dyn Fn(&mut State, Entity, &str, Rc<dyn Fn(&mut State, String)>)>,
+    on_change:      Rc<dyn Fn(&mut Self, &mut State, Entity, Rc<RefCell<BlockFun>>)>,
 }
 
 impl BlockCodeEditor {
@@ -83,17 +95,27 @@ impl BlockCodeEditor {
             category_order,
             lang,
             code,
-            on_change:   None,
+            on_change:      Rc::new(|_, _, _, _| {}),
+            on_query_input: Rc::new(|state, _, _, cb| { cb(state, "1.2".to_string()) }),
             current_pos: Rc::new(RefCell::new(
                 BlockPos::Cell { id: 0, x: 0, y: 0 })),
         }
+    }
+
+    pub fn on_query_input<F>(mut self, on_query_input: F) -> Self
+    where
+        F: 'static + Fn(&mut State, Entity, &str, Rc<dyn Fn(&mut State, String)>),
+    {
+        self.on_query_input = Rc::new(on_query_input);
+
+        self
     }
 
     pub fn on_change<F>(mut self, on_change: F) -> Self
     where
         F: 'static + Fn(&mut Self, &mut State, Entity, Rc<RefCell<BlockFun>>),
     {
-        self.on_change = Some(Box::new(on_change));
+        self.on_change = Rc::new(on_change);
 
         self
     }
@@ -112,6 +134,30 @@ impl Widget for BlockCodeEditor {
 
         entity.set_element(state, "block_code_editor");
 
+        let input_pop = Popup::new().build(state, Entity::root(), |builder| {
+            builder.class("block_input")
+        });
+
+        let inp_col = Column::new().build(state, input_pop, |builder| builder);
+
+        let txt_submit_cb : Rc<RefCell<Box<dyn Fn(&mut State, String)>>> =
+            Rc::new(RefCell::new(Box::new(|state, input| { })));
+
+        let inp_tx = Textbox::new("")
+            .on_submit({
+                let txt_submit_cb = txt_submit_cb.clone();
+                move |txt, state, ent| {
+                    (*txt_submit_cb.borrow())(state, txt.text.to_string());
+
+                    state.insert_event(
+                        Event::new(PopupEvent::Close)
+                        .target(ent)
+                        .origin(Entity::root()));
+                }
+            })
+            .build(state, inp_col, |builder| builder);
+
+
         let pop = Popup::new().build(state, Entity::root(), |builder| {
             builder.class("block_selector")
         });
@@ -123,11 +169,11 @@ impl Widget for BlockCodeEditor {
                 let code        = self.code.clone();
                 let current_pos = self.current_pos.clone();
 
-                move |state: &mut State, typ: &str| {
+                move |state: &mut State, typ: &str, val: Option<String>| {
                     let (id, x, y) = current_pos.borrow().pos();
 
                     let _ = code.borrow_mut()
-                        .instanciate_at(id, x, y, typ, None);
+                        .instanciate_at(id, x, y, typ, val);
 
                     println!("DOOOO {:?}", current_pos.borrow());
 
@@ -150,13 +196,74 @@ impl Widget for BlockCodeEditor {
                 col);
         }
 
-        for (cat, typ, needs_input) in self.lang.borrow().get_type_list() {
+        let mut types = self.lang.borrow().get_type_list();
+        types.sort_by(|a, b| a.1.cmp(&b.1));
+
+        for (cat, typ, user_input) in types.into_iter() {
             if let Some(col) = cat_cols.get(&cat) {
                 Button::with_label(&typ)
                     .on_release({
-                        let abi = add_block_item.clone();
-                        let typ = typ.to_string();
-                        move |_, state, _| { (*abi)(state, &typ); } })
+                        let query = self.on_query_input.clone();
+                        let abi   = add_block_item.clone();
+                        let typ   = typ.to_string();
+                        let txt_submit_cb = txt_submit_cb.clone();
+
+                        move |wid, state, ent| {
+                            match user_input {
+                                BlockUserInput::Identifier => {
+                                    (*txt_submit_cb.borrow_mut()) = {
+                                        let abi = abi.clone();
+                                        let typ = typ.clone();
+                                        Box::new(move |state, txt| {
+                                            (*abi)(state, &typ, Some(txt));
+                                        })
+                                    };
+
+                                    state.insert_event(
+                                        Event::new(PopupEvent::Close)
+                                        .target(pop)
+                                        .origin(Entity::root()));
+                                    state.insert_event(
+                                        Event::new(PopupEvent::OpenAtCursor)
+                                        .target(input_pop)
+                                        .origin(Entity::root()));
+                                    state.set_focus(inp_tx);
+                                },
+                                BlockUserInput::Float => {
+                                    (*txt_submit_cb.borrow_mut()) = {
+                                        let abi = abi.clone();
+                                        let typ = typ.clone();
+                                        Box::new(move |state, txt| {
+                                            (*abi)(state, &typ, Some(txt));
+                                        })
+                                    };
+
+                                    state.insert_event(
+                                        Event::new(PopupEvent::Close)
+                                        .target(pop)
+                                        .origin(Entity::root()));
+                                    state.insert_event(
+                                        Event::new(PopupEvent::OpenAtCursor)
+                                        .target(input_pop)
+                                        .origin(Entity::root()));
+                                    state.set_focus(inp_tx);
+                                },
+                                BlockUserInput::ClientDecision => {
+                                    let abi = abi.clone();
+                                    let typ = typ.clone();
+
+                                    (*query)(state, ent, &typ, Rc::new({
+                                        let typ = typ.clone();
+                                        move |state, value| {
+                                            (*abi)(state, &typ, Some(value));
+                                        }
+                                    }));
+                                },
+                                _ | BlockUserInput::None => {
+                                    (*abi)(state, &typ, None);
+                                },
+                            }
+                        } })
                     .build(state, *col, |builder| builder);
             }
         }

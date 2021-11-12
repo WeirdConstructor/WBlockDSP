@@ -9,6 +9,7 @@ use crate::{
     BlockFun,
     BlockType,
     BlockCodeView,
+    BlockUserInput,
 };
 
 use std::rc::Rc;
@@ -50,10 +51,20 @@ impl VValUserData for VValBlockLanguage {
                 bt.description = env.arg(0).v_s_rawk("description");
                 bt.rows        = env.arg(0).v_ik("rows") as usize;
                 bt.area_count  = env.arg(0).v_ik("area_count") as usize;
-                bt.user_input  = env.arg(0).v_bk("user_input");
                 bt.color       = env.arg(0).v_ik("color") as usize;
                 bt.inputs  = vec![];
                 bt.outputs = vec![];
+                env.arg(0).v_k("user_input").with_s_ref(|s| {
+                    bt.user_input =
+                        match &s[..] {
+                            "integer"       => BlockUserInput::Integer,
+                            "float"         => BlockUserInput::Float,
+                            "identifier"    => BlockUserInput::Identifier,
+                            _               => BlockUserInput::None,
+                        }
+                });
+
+
                 env.arg(0).v_k("inputs").with_iter(|it| {
                     for (i, _) in it {
                         if i.is_some() {
