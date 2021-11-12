@@ -122,6 +122,7 @@ pub struct WTFragment {
     cmd:            Option<String>,
     chars:          Vec<char>,
     ext_size_px:    (f32, f32),
+    space_px:       f32,
     width_px:       f32,
     height_px:      f32,
     x:              f32,
@@ -140,6 +141,7 @@ impl WTFragment {
             chars:          vec![],
             ext_size_px:    (0.0, 0.0),
             width_px:       0.0,
+            space_px:       0.0,
             height_px:      0.0,
             x:              0.0,
         }
@@ -162,6 +164,8 @@ impl WTFragment {
 
         let fs = self.font_size;
 
+        self.space_px = p.text_width(fs, true, " ") + 1.0;
+
         match self.typ {
             FragType::Value { .. } => {
                 if self.is_active && self.height_px < 1.0 {
@@ -181,7 +185,8 @@ impl WTFragment {
                 self.width_px   = self.ext_size_px.0.max(self.width_px);
             },
             FragType::Text => {
-                self.width_px  = p.text_width(fs, true, &self.text) + 1.0;
+                let w = p.text_width(fs, true, &self.text);
+                self.width_px  = if w > 0.01 { w + 1.0 } else { 0.0 };
                 self.height_px = p.font_height(fs, true);
             }
         }
@@ -315,6 +320,7 @@ struct WTLine {
     line_h: f32,
     line_y: f32,
     align:  VAlign,
+    wrap:   bool,
 }
 
 impl WTLine {
@@ -324,21 +330,55 @@ impl WTLine {
             line_h: 0.0,
             line_y: 0.0,
             align:  VAlign::Bottom,
+            wrap:   false,
         }
     }
 
     fn add(&mut self, frag: WTFragment) { self.frags.push(frag); }
 
-    fn finish(&mut self, align: VAlign, default_h: f32, y: f32) -> f32 {
+    fn calc_cur_w(&self, wrap: bool, tail_frag: Option<&WTFragment>) -> f32 {
+        let mut w            = 0.0;
+        let mut next_space_w = 0.0;
+
+        for frag in &self.frags {
+            if w > 0.1 && wrap {
+                w += next_space_w;
+            }
+
+            w += frag.width_px;
+            next_space_w = frag.space_px;
+        }
+
+        if let Some(frag) = tail_frag {
+            if w > 0.1 && wrap {
+                w += next_space_w;
+            }
+
+            w += frag.width_px;
+        }
+
+        w
+    }
+
+    fn finish(&mut self, align: VAlign, wrap: bool, default_h: f32, y: f32) -> f32 {
         let mut line_h = default_h;
         let mut x      = 0.0;
+        let mut next_space_w = 0.0;
 
         for frag in &mut self.frags {
+            if x > 0.1 {
+                if wrap {
+                    x += next_space_w;
+                }
+            }
+
             line_h = line_h.max(frag.height_px);
             frag.x = x;
             x += frag.width_px;
+            next_space_w = frag.space_px;
         }
 
+        self.wrap   = wrap;
         self.align  = align;
         self.line_h = line_h;
         self.line_y = y;
@@ -349,26 +389,34 @@ impl WTLine {
 
 #[derive(Clone)]
 struct DataSource {
-    generation:  usize,
-    point_cache: Vec<(f32, f32)>,
-    source:      Rc<dyn WichTextDataSource>,
+    generation:         usize,
+    cache_graph_size:   (f32, f32),
+    point_cache:        Vec<(f32, f32)>,
+    source:             Rc<dyn WichTextDataSource>,
 }
 
 impl DataSource {
     fn new(source: Rc<dyn WichTextDataSource>) -> Self {
         Self {
-            generation:     0,
-            point_cache:    vec![],
+            generation:         0,
+            cache_graph_size:   (0.0, 0.0),
+            point_cache:        vec![],
             source,
         }
     }
 
     fn create_points(&mut self, graph_w: f32, graph_h: f32) {
-        if self.generation == self.source.generation() {
+        let graph_size = (graph_w.floor(), graph_h.floor());
+        if    self.generation       == self.source.generation()
+           && self.cache_graph_size == graph_size
+        {
             return;
         }
 
         self.point_cache.clear();
+        self.cache_graph_size = graph_size;
+
+        println!("REDRAW POINTS {:?}", graph_size);
 
         if self.source.samples() > 0 {
             let xd =
@@ -404,7 +452,9 @@ pub struct WichText {
 
     new_text:       Option<String>,
     lines:          Vec<WTLine>,
+    wrapped_lines:  Vec<WTLine>,
     full_h:         f32,
+    last_width:     i64,
 
     zones:          Vec<(Rect, usize, usize)>,
 
@@ -461,7 +511,9 @@ impl WichText {
 
             new_text:       None,
             lines:          vec![],
+            wrapped_lines:  vec![],
             full_h:         0.0,
+            last_width:     0,
             data_sources:   HashMap::new(),
             value_source:   Rc::new(RefCell::new(HashMap::new())),
 
@@ -523,6 +575,7 @@ impl WichText {
             let mut in_frag       = false;
 
             let mut align : VAlign = VAlign::Bottom;
+            let mut wordwrap = false;
 
             while let Some(c) = ci.next() {
                 if in_frag_start {
@@ -530,6 +583,7 @@ impl WichText {
                         'L' => {
                             align = VAlign::from_char(ci.next().unwrap_or('b'));
                         },
+                        'R' => { wordwrap = true; },
                         'v' => {
                             let key = parse_key(&mut ci);
                             cur_fragment.typ = FragType::Value { key };
@@ -621,7 +675,22 @@ impl WichText {
                             }
                         },
                         _ => {
-                            cur_fragment.push_char(c);
+                            if wordwrap {
+                                if c.is_whitespace() {
+                                    if cur_fragment.chars.len() > 0 {
+                                        cur_fragment.finish(p);
+
+                                        frag_line.add(
+                                            std::mem::replace(
+                                                &mut cur_fragment,
+                                                WTFragment::new(self.style.font_size)));
+                                    }
+                                } else {
+                                    cur_fragment.push_char(c);
+                                }
+                            } else {
+                                cur_fragment.push_char(c);
+                            }
                         },
                     }
                 }
@@ -638,13 +707,56 @@ impl WichText {
 
 
             let default_font_h = p.font_height(self.style.font_size, true);
-            let line_h = frag_line.finish(align, default_font_h, cur_y);
+            let line_h = frag_line.finish(align, wordwrap, default_font_h, cur_y);
             self.lines.push(frag_line);
 
             cur_y += line_h;
         }
+    }
 
-        self.full_h = cur_y;
+    fn wrap_lines(&mut self, default_h: f32, width: f32) {
+        self.wrapped_lines.clear();
+
+        let mut y = 0.0;
+
+        for line in self.lines.iter() {
+            if !line.wrap {
+                let mut new_line = line.clone();
+                y += new_line.finish(line.align, false, default_h, y);
+                self.wrapped_lines.push(new_line);
+                continue;
+            }
+
+            let mut cur_line = WTLine::new();
+
+            for frag in &line.frags {
+                let add_after =
+                    if cur_line.calc_cur_w(true, Some(&frag)) <= width
+                       || cur_line.frags.len() == 0
+                    {
+                        cur_line.add(frag.clone());
+                        false
+                    } else { true };
+
+                if add_after || cur_line.calc_cur_w(true, None) > width {
+                    y += cur_line.finish(line.align, true, default_h, y);
+
+                    self.wrapped_lines.push(
+                        std::mem::replace(&mut cur_line, WTLine::new()));
+                }
+
+                if add_after {
+                    cur_line.add(frag.clone());
+                }
+            }
+
+            if cur_line.frags.len() > 0 {
+                y += cur_line.finish(line.align, true, default_h, y);
+                self.wrapped_lines.push(cur_line);
+            }
+        }
+
+        self.full_h = y;
     }
 
     fn find_frag_idx_at(&self, x: f32, y: f32) -> Option<(usize, usize)> {
@@ -679,11 +791,11 @@ impl WichText {
     }
 
     fn get(&self, line: usize, frag: usize) -> Option<&WTFragment> {
-        self.lines.get(line)?.frags.get(frag)
+        self.wrapped_lines.get(line)?.frags.get(frag)
     }
 
     fn get_mut(&mut self, line: usize, frag: usize) -> Option<&mut WTFragment> {
-        self.lines.get_mut(line)?.frags.get_mut(frag)
+        self.wrapped_lines.get_mut(line)?.frags.get_mut(frag)
     }
 }
 
@@ -869,6 +981,14 @@ impl Widget for WichText {
 
         if let Some(new_text) = self.new_text.take() {
             self.parse(p, &new_text);
+            self.last_width = 0;
+        }
+
+        let width = pos.w.floor() as i64;
+        if self.last_width != width {
+            let default_font_h = p.font_height(self.style.font_size, true);
+            self.wrap_lines(default_font_h, pos.w.floor());
+            self.last_width = width;
         }
 
         self.zones.clear();
@@ -898,8 +1018,8 @@ impl Widget for WichText {
                 (val_s, knb_v)
             });
 
-        for (line_idx, WTLine { frags, line_h, line_y, align }) in
-            self.lines.iter().enumerate()
+        for (line_idx, WTLine { frags, line_h, line_y, align, .. }) in
+            self.wrapped_lines.iter().enumerate()
         {
             for (frag_idx, frag) in frags.iter().enumerate() {
                 let valign_offs =

@@ -587,8 +587,9 @@ pub fn main() {
 
                     text += "[Lm:Middle ]And some active values: [c14f9ah20vF: F ][aw40h40vVOL:Volume][vDLY:Delay]\n";
                     text += "[Lt:Top    ]And some active values: [c14f9ah20vF: F ][aw40h40vVOL:Volume][vDLY:Delay]\n";
-                    text += "[Lb:Bottom ]And some active values: [c14f9ah20vF: F ][aw40h40vVOL:Volume][avDLY:Delay]\n";
-                    text += "[c6aw100h100vBig:Big Knob";
+                    text += "[R:][Lb:Bottom ]And some active values: [c14f9ah20vF: F ][aw40h40vVOL:Volume][avDLY:Delay]\n";
+                    text += "[c6aw100h100vBig:Big Knob\n";
+                    text += "[R:]Lorem ipsum dolor sit amet, consetetur sadipscing elitr, sed diam nonumy eirmod tempor invidunt ut labore [c4C11w30h20gG2:Sin] et dolore magna aliquyam erat, sed diam voluptua. At vero eos et accusam et justo duo dolores et ea rebum. Stet clita kasd gubergren, no sea takimata sanctus est Lorem ipsum dolor sit amet. Lorem ipsum dolor sit amet, consetetur sadipscing elitr, sed diam nonumy eirmod tempor invidunt ut labore et dolore magna aliquyam erat, sed diam voluptua. At vero eos et accusam et justo duo dolores et ea rebum. Stet clita kasd gubergren, [avDLY:Delay]no sea takimata sanctus est Lorem ipsum dolor sit amet.";
 
                     for l in 0..10 {
                         text += &format!("\nOn Line {}, with some clicky comand: [ac{}:{}]!",
