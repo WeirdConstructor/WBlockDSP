@@ -570,7 +570,8 @@ impl WichText {
             let mut frag_line = WTLine::new();
             let mut ci = line.chars().peekable();
 
-            let mut cur_fragment  = WTFragment::new(self.style.font_size);
+            let mut cur_font_size = self.style.font_size;
+            let mut cur_fragment  = WTFragment::new(cur_font_size);
             let mut in_frag_start = false;
             let mut in_frag       = false;
 
@@ -621,8 +622,9 @@ impl WichText {
                                 parse_number::<usize>(&mut ci, 0);
                         },
                         'f' => {
-                            cur_fragment.font_size =
+                            cur_font_size =
                                 parse_number::<f32>(&mut ci, 0.0);
+                            cur_fragment.font_size = cur_font_size;
                         },
                         'a' => {
                             cur_fragment.is_active = true;
@@ -647,7 +649,7 @@ impl WichText {
                                 frag_line.add(
                                     std::mem::replace(
                                         &mut cur_fragment,
-                                        WTFragment::new(self.style.font_size)));
+                                        WTFragment::new(cur_font_size)));
 
                                 in_frag = false;
                             }
@@ -669,7 +671,7 @@ impl WichText {
                                 frag_line.add(
                                     std::mem::replace(
                                         &mut cur_fragment,
-                                        WTFragment::new(self.style.font_size)));
+                                        WTFragment::new(cur_font_size)));
 
                                 in_frag_start = true;
                             }
@@ -683,7 +685,7 @@ impl WichText {
                                         frag_line.add(
                                             std::mem::replace(
                                                 &mut cur_fragment,
-                                                WTFragment::new(self.style.font_size)));
+                                                WTFragment::new(cur_font_size)));
                                     }
                                 } else {
                                     cur_fragment.push_char(c);
@@ -702,11 +704,11 @@ impl WichText {
                 frag_line.add(
                     std::mem::replace(
                         &mut cur_fragment,
-                        WTFragment::new(self.style.font_size)));
+                        WTFragment::new(cur_font_size)));
             }
 
 
-            let default_font_h = p.font_height(self.style.font_size, true);
+            let default_font_h = p.font_height(cur_font_size, true);
             let line_h = frag_line.finish(align, wordwrap, default_font_h, cur_y);
             self.lines.push(frag_line);
 
