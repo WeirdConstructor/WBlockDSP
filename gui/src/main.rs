@@ -96,6 +96,14 @@ pub fn main() {
     let lang = Rc::new(RefCell::new(BlockLanguage::new()));
     let code = Rc::new(RefCell::new(BlockFun::new(lang.clone())));
 
+    let categories : Vec<String> = [
+        "literals",
+        "variables",
+        "arithmetics",
+        "functions",
+        "routing",
+    ].iter().map(|s| s.to_string()).collect();
+
     lang.borrow_mut().define(BlockType {
         category:       "literals".to_string(),
         name:           "zero".to_string(),
@@ -312,7 +320,7 @@ pub fn main() {
 
                 let editor =
                     block_code_editor::BlockCodeEditor::new(
-                        style.clone(), lang.clone(), code.clone())
+                        style.clone(), categories.clone(), lang.clone(), code.clone())
                     .build(state, row, |builder| builder);
 
 //                let col = Column::new().build(state, row, |builder| builder);

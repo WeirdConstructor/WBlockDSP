@@ -13,6 +13,7 @@ use wblockdsp::wlapi::*;
 
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::collections::HashMap;
 
 const STYLE: &str = r#"
     popup {
@@ -29,6 +30,11 @@ const STYLE: &str = r#"
     }
     popup button:active {
         background-color: #c2c2c2;
+    }
+
+    .block_selector {
+        width: 500px;
+        height: 200px;
     }
 "#;
 
@@ -51,21 +57,30 @@ const STYLE: &str = r#"
 //        })
 //        .build(state, parent, |builder| builder);
 //}
-//
-//
+
+
 pub struct BlockCodeEditor {
     lang:        Rc<RefCell<BlockLanguage>>,
     code:        Rc<RefCell<BlockFun>>,
     current_pos: Rc<RefCell<BlockPos>>,
     style:       BlockCodeStyle,
 
+    category_order: Vec<String>,
+
     on_change:   Option<Box<dyn Fn(&mut Self, &mut State, Entity, Rc<RefCell<BlockFun>>)>>,
 }
 
 impl BlockCodeEditor {
-    pub fn new(style: BlockCodeStyle, lang: Rc<RefCell<BlockLanguage>>, code: Rc<RefCell<BlockFun>>) -> Self {
+    pub fn new(
+        style: BlockCodeStyle,
+        category_order: Vec<String>,
+        lang: Rc<RefCell<BlockLanguage>>,
+        code: Rc<RefCell<BlockFun>>
+    ) -> Self
+    {
         Self {
             style,
+            category_order,
             lang,
             code,
             on_change:   None,
@@ -98,10 +113,10 @@ impl Widget for BlockCodeEditor {
         entity.set_element(state, "block_code_editor");
 
         let pop = Popup::new().build(state, Entity::root(), |builder| {
-            builder
-                .set_width(Pixels(100.0))
-                .set_height(Pixels(430.0))
+            builder.class("block_selector")
         });
+
+        let pop_row = Row::new().build(state, pop, |builder| builder);
 
         let add_block_item =
             Rc::new({
@@ -126,12 +141,26 @@ impl Widget for BlockCodeEditor {
                 }
             });
 
-        Button::with_label("-")
-            .on_release({ let abi = add_block_item.clone();
-                move |_, state, _| { (*add_block_item)(state, "-"); } })
-            .build(state, pop, |builder| builder);
+        let mut cat_cols : HashMap<String, Entity> = HashMap::new();
 
-        let pop_col = Column::new().build(state, pop, |builder| builder);
+        for cat in &self.category_order {
+            let col = Column::new().build(state, pop_row, |builder| builder);
+            cat_cols.insert(
+                cat.to_string(),
+                col);
+        }
+
+        for (cat, typ, needs_input) in self.lang.borrow().get_type_list() {
+            if let Some(col) = cat_cols.get(&cat) {
+                Button::with_label(&typ)
+                    .on_release({
+                        let abi = add_block_item.clone();
+                        let typ = typ.to_string();
+                        move |_, state, _| { (*abi)(state, &typ); } })
+                    .build(state, *col, |builder| builder);
+            }
+        }
+
 
         let bc =
             BlockCode::new(self.style.clone())
