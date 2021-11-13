@@ -118,6 +118,42 @@ pub fn main() {
 
     lang.borrow_mut().define(BlockType {
         category:       "literals".to_string(),
+        name:           "π".to_string(),
+        rows:           1,
+        inputs:         vec![],
+        outputs:        vec![Some("".to_string())],
+        area_count:     0,
+        user_input:     BlockUserInput::None,
+        description:    "The PI number".to_string(),
+        color:          1,
+    });
+
+    lang.borrow_mut().define(BlockType {
+        category:       "literals".to_string(),
+        name:           "2π".to_string(),
+        rows:           1,
+        inputs:         vec![],
+        outputs:        vec![Some("".to_string())],
+        area_count:     0,
+        user_input:     BlockUserInput::None,
+        description:    "2 * PI == TAU".to_string(),
+        color:          1,
+    });
+
+    lang.borrow_mut().define(BlockType {
+        category:       "literals".to_string(),
+        name:           "SR".to_string(),
+        rows:           1,
+        inputs:         vec![],
+        outputs:        vec![Some("".to_string())],
+        area_count:     0,
+        user_input:     BlockUserInput::None,
+        description:    "The sample rate".to_string(),
+        color:          1,
+    });
+
+    lang.borrow_mut().define(BlockType {
+        category:       "literals".to_string(),
         name:           "value".to_string(),
         rows:           1,
         inputs:         vec![],
@@ -268,7 +304,6 @@ pub fn main() {
         });
     }
 
-    lang.borrow_mut().define_identifier("SR");
     lang.borrow_mut().define_identifier("alpha");
     lang.borrow_mut().define_identifier("beta");
     lang.borrow_mut().define_identifier("delta");
