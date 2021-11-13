@@ -833,18 +833,36 @@ impl BlockType {
 
 #[derive(Debug, Clone)]
 pub struct BlockLanguage {
-    types:  HashMap<String, BlockType>,
+    types:          HashMap<String, BlockType>,
+    identifiers:    HashMap<String, String>,
 }
 
 impl BlockLanguage {
     pub fn new() -> Self {
         Self {
-            types: HashMap::new(),
+            types:       HashMap::new(),
+            identifiers: HashMap::new(),
         }
+    }
+
+    pub fn define_identifier(&mut self, id: &str) {
+        let v = id.to_string();
+        self.identifiers.insert(id.to_string(), v);
     }
 
     pub fn define(&mut self, typ: BlockType) {
         self.types.insert(typ.name.clone(), typ);
+    }
+
+    pub fn is_identifier(&self, id: &str) -> bool {
+        self.identifiers.get(id).is_some()
+    }
+
+    pub fn list_identifiers(&self) -> Vec<String> {
+        let mut identifiers : Vec<String> =
+            self.identifiers.keys().cloned().collect();
+        identifiers.sort();
+        identifiers
     }
 
     pub fn get_type_list(&self) -> Vec<(String, String, BlockUserInput)> {

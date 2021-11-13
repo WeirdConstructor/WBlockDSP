@@ -118,7 +118,7 @@ pub fn main() {
 
     lang.borrow_mut().define(BlockType {
         category:       "literals".to_string(),
-        name:           "number".to_string(),
+        name:           "value".to_string(),
         rows:           1,
         inputs:         vec![],
         outputs:        vec![Some("".to_string())],
@@ -268,10 +268,18 @@ pub fn main() {
         });
     }
 
-    let _ = code.borrow_mut().instanciate_at(0, 1, 1, "number", Some("2.32".to_string()));
-    let _ = code.borrow_mut().instanciate_at(0, 2, 3, "number", Some("1.0".to_string()));
-    let _ = code.borrow_mut().instanciate_at(0, 2, 2, "number", Some("-1.0".to_string()));
-    let _ = code.borrow_mut().instanciate_at(0, 2, 1, "number", Some("0.5".to_string()));
+    lang.borrow_mut().define_identifier("SR");
+    lang.borrow_mut().define_identifier("alpha");
+    lang.borrow_mut().define_identifier("beta");
+    lang.borrow_mut().define_identifier("delta");
+    lang.borrow_mut().define_identifier("gamma");
+    lang.borrow_mut().define_identifier("&sig1");
+    lang.borrow_mut().define_identifier("&sig2");
+
+    let _ = code.borrow_mut().instanciate_at(0, 1, 1, "value", Some("2.32".to_string()));
+    let _ = code.borrow_mut().instanciate_at(0, 2, 3, "value", Some("1.0".to_string()));
+    let _ = code.borrow_mut().instanciate_at(0, 2, 2, "value", Some("-1.0".to_string()));
+    let _ = code.borrow_mut().instanciate_at(0, 2, 1, "value", Some("0.5".to_string()));
     let _ = code.borrow_mut().instanciate_at(0, 3, 3, "+", None);
     let _ = code.borrow_mut().instanciate_at(0, 4, 3, "->3", None);
     let _ = code.borrow_mut().instanciate_at(0, 2, 6, "if", None);

@@ -47,6 +47,11 @@ const STYLE: &str = r#"
         width: 100px;
         height: 30px;
     }
+
+    .block_vars {
+        width: 100px;
+        height: 300px;
+    }
 "#;
 
 //fn spawn_button<F: 'static + Fn(&mut State, BlockPos)>(
@@ -134,25 +139,32 @@ impl Widget for BlockCodeEditor {
 
         entity.set_element(state, "block_code_editor");
 
+        let var_pop = Popup::new().build(state, Entity::root(), |builder| {
+            builder.class("block_vars")
+        });
+
         let input_pop = Popup::new().build(state, Entity::root(), |builder| {
             builder.class("block_input")
         });
 
         let inp_col = Column::new().build(state, input_pop, |builder| builder);
 
-        let txt_submit_cb : Rc<RefCell<Box<dyn Fn(&mut State, String)>>> =
-            Rc::new(RefCell::new(Box::new(|state, input| { })));
+        let txt_submit_cb : Rc<RefCell<Box<dyn Fn(&mut State, String) -> bool>>> =
+            Rc::new(RefCell::new(Box::new(|state, input| { true })));
 
         let inp_tx = Textbox::new("")
             .on_submit({
                 let txt_submit_cb = txt_submit_cb.clone();
                 move |txt, state, ent| {
-                    (*txt_submit_cb.borrow())(state, txt.text.to_string());
-
-                    state.insert_event(
-                        Event::new(PopupEvent::Close)
-                        .target(ent)
-                        .origin(Entity::root()));
+                    if (*txt_submit_cb.borrow())(state, txt.text.to_string()) {
+                        println!("CLOSE");
+                        state.insert_event(
+                            Event::new(PopupEvent::Close)
+                            .target(ent)
+                            .origin(Entity::root()));
+                    } else {
+                        println!("???");
+                    }
                 }
             })
             .build(state, inp_col, |builder| builder);
@@ -187,6 +199,45 @@ impl Widget for BlockCodeEditor {
                 }
             });
 
+        let query_variable : Rc<RefCell<dyn FnMut(&mut State, String)>> = {
+                let mut col =
+                    Column::new().build(
+                        state, var_pop, |builder| builder);
+                let lang = self.lang.clone();
+                let abi  = add_block_item.clone();
+
+                Rc::new(RefCell::new(move |state: &mut State, typ: String| {
+                    state.remove(col);
+                    col =
+                        Column::new().build(
+                            state, var_pop, |builder| builder);
+
+                    for v in lang.borrow().list_identifiers().into_iter() {
+                        Button::with_label(&v)
+                            .on_release({
+                                let abi = abi.clone();
+                                let typ = typ.clone();
+                                let var = v.clone();
+
+                                move |wid, state, ent| {
+                                    state.insert_event(
+                                        Event::new(PopupEvent::Close)
+                                        .target(var_pop)
+                                        .origin(Entity::root()));
+
+                                    (*abi)(state, &typ, Some(v.clone()));
+                                }
+                            }).build(state, col, |builder| builder);
+                    }
+
+                    state.insert_event(
+                        Event::new(PopupEvent::OpenAtCursor)
+                        .target(var_pop)
+                        .origin(Entity::root()));
+                }))
+            };
+
+
         let mut cat_cols : HashMap<String, Entity> = HashMap::new();
 
         for cat in &self.category_order {
@@ -206,35 +257,31 @@ impl Widget for BlockCodeEditor {
                         let query = self.on_query_input.clone();
                         let abi   = add_block_item.clone();
                         let typ   = typ.to_string();
+                        let qry   = query_variable.clone();
                         let txt_submit_cb = txt_submit_cb.clone();
+
+                        state.focused = entity;
 
                         move |wid, state, ent| {
                             match user_input {
                                 BlockUserInput::Identifier => {
-                                    (*txt_submit_cb.borrow_mut()) = {
-                                        let abi = abi.clone();
-                                        let typ = typ.clone();
-                                        Box::new(move |state, txt| {
-                                            (*abi)(state, &typ, Some(txt));
-                                        })
-                                    };
-
                                     state.insert_event(
                                         Event::new(PopupEvent::Close)
                                         .target(pop)
                                         .origin(Entity::root()));
-                                    state.insert_event(
-                                        Event::new(PopupEvent::OpenAtCursor)
-                                        .target(input_pop)
-                                        .origin(Entity::root()));
-                                    state.set_focus(inp_tx);
+                                    (*qry.borrow_mut())(state, typ.clone());
                                 },
                                 BlockUserInput::Float => {
                                     (*txt_submit_cb.borrow_mut()) = {
                                         let abi = abi.clone();
                                         let typ = typ.clone();
                                         Box::new(move |state, txt| {
-                                            (*abi)(state, &typ, Some(txt));
+                                            if let Ok(_) = txt.parse::<f32>() {
+                                                (*abi)(state, &typ, Some(txt));
+                                                true
+                                            } else {
+                                                false
+                                            }
                                         })
                                     };
 
@@ -242,11 +289,12 @@ impl Widget for BlockCodeEditor {
                                         Event::new(PopupEvent::Close)
                                         .target(pop)
                                         .origin(Entity::root()));
+                                    inp_tx.set_text(state, "");
+                                    state.set_focus(inp_tx);
                                     state.insert_event(
                                         Event::new(PopupEvent::OpenAtCursor)
                                         .target(input_pop)
                                         .origin(Entity::root()));
-                                    state.set_focus(inp_tx);
                                 },
                                 BlockUserInput::ClientDecision => {
                                     let abi = abi.clone();

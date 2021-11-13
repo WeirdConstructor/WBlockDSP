@@ -164,7 +164,7 @@ impl WTFragment {
 
         let fs = self.font_size;
 
-        self.space_px = p.text_width(fs, true, " ") + 1.0;
+        self.space_px = p.text_width(fs, true, " ");
 
         match self.typ {
             FragType::Value { .. } => {
