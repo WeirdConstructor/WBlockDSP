@@ -289,8 +289,14 @@ impl Widget for BlockCodeEditor {
                                         Event::new(PopupEvent::Close)
                                         .target(pop)
                                         .origin(Entity::root()));
-                                    inp_tx.set_text(state, "");
-                                    state.set_focus(inp_tx);
+                                    state.insert_event(
+                                        Event::new(TextboxEvent::SetValue("".to_string()))
+                                        .target(inp_tx)
+                                        .origin(Entity::root()));
+                                    state.insert_event(
+                                        Event::new(TextboxEvent::BeginEdit)
+                                        .target(inp_tx)
+                                        .origin(Entity::root()));
                                     state.insert_event(
                                         Event::new(PopupEvent::OpenAtCursor)
                                         .target(input_pop)
