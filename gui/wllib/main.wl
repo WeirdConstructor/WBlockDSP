@@ -16,7 +16,11 @@
 !:global init = {
     std:displayln "INIT";
 
-    bc:wichtext_set 0 "[f40:Foo Bar!]\n\nAnd click [af14:Here!]";
+    bc:wichtext_set 0 ~
+        std:str:cat
+            "[f40:WLambda API!]\n\n"
+            "And click [af18:Click1]\n"
+            "And here: [af18:Click2]";
 
     !lang = bc:lang[];
     lang.define ${
