@@ -12,6 +12,7 @@ mod block_code;
 mod block_code_style;
 mod wichtext;
 mod block_code_editor;
+mod wlapi;
 
 use wichtext::*;
 
@@ -76,6 +77,26 @@ pub fn gen_code(code: &mut BlockFun) {
     tree.walk_dump("", "", 0);
 }
 
+pub fn exec_queue(
+    state: &mut State,
+    queue: &Rc<RefCell<Vec<GUIMsg>>>,
+    wichtext1: Entity,
+) {
+    let msgs = std::mem::replace(&mut *queue.borrow_mut(), vec![]);
+
+    for msg in msgs {
+        match msg {
+            GUIMsg::SetText(wichtext_id, text) => {
+                if wichtext_id == 0 {
+                    state.insert_event(
+                        Event::new(
+                            WichTextMessage::SetText(text))
+                        .target(wichtext1));
+                }
+            },
+        }
+    }
+}
 
 pub fn exec_cb(
     wl_ctx:     Rc<RefCell<EvalContext>>,
@@ -92,17 +113,41 @@ pub fn exec_cb(
     }
 }
 
-pub fn main() {
-    let lang = Rc::new(RefCell::new(BlockLanguage::new()));
-    let code = Rc::new(RefCell::new(BlockFun::new(lang.clone())));
+#[derive(Debug, Clone)]
+pub enum GUIMsg {
+    SetText(usize, String),
+}
 
-    let categories : Vec<String> = [
-        "literals",
-        "variables",
-        "arithmetics",
-        "functions",
-        "routing",
-    ].iter().map(|s| s.to_string()).collect();
+pub fn setup_bc_module(queue: Rc<RefCell<Vec<GUIMsg>>>)
+    -> (wlambda::SymbolTable, Rc<RefCell<BlockLanguage>>, Rc<RefCell<BlockFun>>)
+{
+    let mut st = wlambda::SymbolTable::new();
+
+    let vvlang = VValBlockLanguage::create();
+    let vvfun  = VValBlockFun::create(vvlang.clone());
+
+    set_modfun!(st, vvlang, lang, Some(0), Some(0), _env, _argc, {
+        Ok(vvlang.clone())
+    });
+
+    set_modfun!(st, vvfun, fun, Some(0), Some(0), _env, _argc, {
+        Ok(vvfun.clone())
+    });
+
+    set_modfun!(st, queue, wichtext_set, Some(2), Some(2), env, _argc, {
+        queue.borrow_mut().push(
+            GUIMsg::SetText(
+                env.arg(0).i() as usize,
+                env.arg(1).s_raw()));
+        Ok(VVal::None)
+    });
+
+    (st, vv2block_code_language(vvlang).unwrap(), vv2block_fun(vvfun).unwrap())
+}
+
+pub fn main() {
+    let queue = Rc::new(RefCell::new(vec![]));
+    let (bc, lang, code) = setup_bc_module(queue.clone());
 
     lang.borrow_mut().define(BlockType {
         category:       "literals".to_string(),
@@ -319,21 +364,9 @@ pub fn main() {
     let _ = code.borrow_mut().instanciate_at(0, 4, 3, "->3", None);
     let _ = code.borrow_mut().instanciate_at(0, 2, 6, "if", None);
 
-    // TODO: Subroutines:
-    //  - make predefined subroutines with nargs=0..4 and one output.
-    //      - inside subroutines you can use arg1, arg2, arg3, ... to refer
-    //        to the subroutine arguments
-    //      - inside subroutine you specify the return value the same way
-    //        you do with "if".
-    //      - there are no scoped variables!
-    //  - you can add a name to the subroutine.
-    //  - when cloning a subroutine, a "call" is created.
-    //    the label will contain the subroutine name.
-
-    // let vizia_st = setup_vizia_module(gui_rec.clone());
-    // global_env.borrow_mut().set_module("vizia", vizia_st);
-
     let global_env = wlambda::GlobalEnv::new_default();
+    global_env.borrow_mut().set_module("bc", bc);
+
     let wl_ctx     = wlambda::EvalContext::new(global_env.clone());
     let wl_ctx     = Rc::new(RefCell::new(wl_ctx));
 
@@ -351,6 +384,23 @@ pub fn main() {
         Err(e) => { panic!("Error in main.wl 'init':\n{}", e); }
     }
 
+    let vv_wt_click =
+        wl_ctx.borrow_mut()
+            .get_global_var("wichtext_click")
+            .unwrap_or(VVal::None);
+
+    let vv_categories =
+        wl_ctx.borrow_mut()
+            .get_global_var("menu_categories")
+            .unwrap_or(VVal::None);
+
+    let mut categories : Vec<String> = vec![];
+    vv_categories.with_iter(|it| {
+        for (v, _key) in it {
+            categories.push(v.s_raw());
+        }
+    });
+
     let app =
         Application::new(
             WindowDescription::new()
@@ -363,260 +413,11 @@ pub fn main() {
 
                 let editor =
                     block_code_editor::BlockCodeEditor::new(
-                        style.clone(), categories.clone(), lang.clone(), code.clone())
+                        style.clone(),
+                        categories.clone(),
+                        lang.clone(),
+                        code.clone())
                     .build(state, row, |builder| builder);
-
-//                let col = Column::new().build(state, row, |builder| builder);
-//                let pop = Popup::new().build(state, window.entity(), |builder| {
-//                    builder
-//                        .set_width(Pixels(100.0))
-//                        .set_height(Pixels(430.0))
-//                });
-//
-//                let pop_col = Column::new().build(state, pop, |builder| builder);
-//
-//                let current_pos =
-//                    Rc::new(RefCell::new(BlockPos::Cell { id: 0, x: 0, y: 0 }));
-//
-//                spawn_button(state, pop_col, pop, "+", current_pos.clone(), {
-//                    let code = code.clone();
-//                        move |_state, pos| {
-//                        let (id, x, y) = pos.pos();
-//                        let _ = code.borrow_mut()
-//                            .instanciate_at(id, x, y, "+", None);
-//                        code.borrow_mut()
-//                            .recalculate_area_sizes();
-//
-//                        gen_code(&mut code.borrow_mut());
-//                    }});
-//                spawn_button(state, pop_col, pop, "-", current_pos.clone(), {
-//                    let code = code.clone();
-//                        move |_state, pos| {
-//                        let (id, x, y) = pos.pos();
-//                        let _ = code.borrow_mut()
-//                            .instanciate_at(id, x, y, "-", None);
-//                        code.borrow_mut()
-//                            .recalculate_area_sizes();
-//
-//                        gen_code(&mut code.borrow_mut());
-//                    }});
-//                spawn_button(state, pop_col, pop, "*", current_pos.clone(), {
-//                    let code = code.clone();
-//                        move |_state, pos| {
-//                        let (id, x, y) = pos.pos();
-//                        let _ = code.borrow_mut()
-//                            .instanciate_at(id, x, y, "*", None);
-//                        code.borrow_mut()
-//                            .recalculate_area_sizes();
-//
-//                        gen_code(&mut code.borrow_mut());
-//                    }});
-//                spawn_button(state, pop_col, pop, "/", current_pos.clone(), {
-//                    let code = code.clone();
-//                        move |_state, pos| {
-//                        let (id, x, y) = pos.pos();
-//                        let _ = code.borrow_mut()
-//                            .instanciate_at(id, x, y, "/", None);
-//                        code.borrow_mut()
-//                            .recalculate_area_sizes();
-//
-//                        gen_code(&mut code.borrow_mut());
-//                    }});
-//                spawn_button(state, pop_col, pop, "if", current_pos.clone(), {
-//                    let code = code.clone();
-//                        move |_state, pos| {
-//                        let (id, x, y) = pos.pos();
-//                        let _ = code.borrow_mut()
-//                            .instanciate_at(id, x, y, "if", None);
-//                        code.borrow_mut()
-//                            .recalculate_area_sizes();
-//
-//                        gen_code(&mut code.borrow_mut());
-//                    }});
-//                spawn_button(state, pop_col, pop, "->", current_pos.clone(), {
-//                    let code = code.clone();
-//                        move |_state, pos| {
-//                        let (id, x, y) = pos.pos();
-//                        let _ = code.borrow_mut()
-//                            .instanciate_at(id, x, y, "->", None);
-//                        code.borrow_mut()
-//                            .recalculate_area_sizes();
-//
-//                        gen_code(&mut code.borrow_mut());
-//                    }});
-//                spawn_button(state, pop_col, pop, "->2", current_pos.clone(), {
-//                    let code = code.clone();
-//                        move |_state, pos| {
-//                        let (id, x, y) = pos.pos();
-//                        let _ = code.borrow_mut()
-//                            .instanciate_at(id, x, y, "->2", None);
-//                        code.borrow_mut()
-//                            .recalculate_area_sizes();
-//
-//                        gen_code(&mut code.borrow_mut());
-//                    }});
-//                spawn_button(state, pop_col, pop, "->3", current_pos.clone(), {
-//                    let code = code.clone();
-//                        move |_state, pos| {
-//                        let (id, x, y) = pos.pos();
-//                        let _ = code.borrow_mut()
-//                            .instanciate_at(id, x, y, "->3", None);
-//                        code.borrow_mut()
-//                            .recalculate_area_sizes();
-//
-//                        gen_code(&mut code.borrow_mut());
-//                    }});
-//                spawn_button(state, pop_col, pop, "set: x", current_pos.clone(), {
-//                    let code = code.clone();
-//                        move |_state, pos| {
-//                        let (id, x, y) = pos.pos();
-//                        let _ = code.borrow_mut()
-//                            .instanciate_at(id, x, y, "set", Some("x".to_string()));
-//                        code.borrow_mut()
-//                            .recalculate_area_sizes();
-//
-//                        gen_code(&mut code.borrow_mut());
-//                    }});
-//                spawn_button(state, pop_col, pop, "get: x", current_pos.clone(), {
-//                    let code = code.clone();
-//                        move |_state, pos| {
-//                        let (id, x, y) = pos.pos();
-//                        let _ = code.borrow_mut()
-//                            .instanciate_at(id, x, y, "get", Some("x".to_string()));
-//                        code.borrow_mut()
-//                            .recalculate_area_sizes();
-//
-//                        gen_code(&mut code.borrow_mut());
-//                    }});
-//                spawn_button(state, pop_col, pop, "sin", current_pos.clone(), {
-//                    let code = code.clone();
-//                        move |_state, pos| {
-//                        let (id, x, y) = pos.pos();
-//                        let _ = code.borrow_mut()
-//                            .instanciate_at(id, x, y, "sin", None);
-//                        code.borrow_mut()
-//                            .recalculate_area_sizes();
-//
-//                        gen_code(&mut code.borrow_mut());
-//                    }});
-//                spawn_button(state, pop_col, pop, "1pole", current_pos.clone(), {
-//                    let code = code.clone();
-//                        move |_state, pos| {
-//                        let (id, x, y) = pos.pos();
-//                        let _ = code.borrow_mut()
-//                            .instanciate_at(id, x, y, "1pole", None);
-//                        code.borrow_mut()
-//                            .recalculate_area_sizes();
-//
-//                        gen_code(&mut code.borrow_mut());
-//                    }});
-//                spawn_button(state, pop_col, pop, "svf", current_pos.clone(), {
-//                    let code = code.clone();
-//                        move |_state, pos| {
-//                        let (id, x, y) = pos.pos();
-//                        let _ = code.borrow_mut()
-//                            .instanciate_at(id, x, y, "svf", None);
-//                        code.borrow_mut()
-//                            .recalculate_area_sizes();
-//
-//                        gen_code(&mut code.borrow_mut());
-//                    }});
-//                spawn_button(state, pop_col, pop, "delay", current_pos.clone(), {
-//                    let code = code.clone();
-//                        move |_state, pos| {
-//                        let (id, x, y) = pos.pos();
-//                        let _ = code.borrow_mut()
-//                            .instanciate_at(id, x, y, "delay", None);
-//                        code.borrow_mut()
-//                            .recalculate_area_sizes();
-//
-//                        gen_code(&mut code.borrow_mut());
-//                    }});
-//
-//                pop_col.set_background_color(state, Color::white());
-//                pop.set_background_color(state, Color::white());
-
-//                let bc =
-//                    BlockCode::new(style.clone())
-//                        .on_click({
-//                            let code = code.clone();
-//                            move |_, state, _e, pos, btn| {
-//                                (*current_pos.borrow_mut()) = pos;
-//
-//                                if let BlockPos::Block { row, col, .. } = pos {
-//                                    let (id, x, y) = pos.pos();
-//
-//                                    if btn == MouseButton::Right {
-//                                        println!("PORT CLICK {:?}", pos);
-//                                        code.borrow_mut()
-//                                            .shift_port(id, x, y, row, col == 1);
-//                                    } else {
-//                                        if col == 1 {
-//                                            let _ = code.borrow_mut()
-//                                                .split_block_chain_after(
-//                                                    id, x, y, Some("->"));
-//                                        } else {
-//                                            let _ = code.borrow_mut()
-//                                                .split_block_chain_after(
-//                                                    id, x - 1, y, None);
-//                                        }
-//                                    }
-//
-//                                    code.borrow_mut()
-//                                        .recalculate_area_sizes();
-//
-//                                    gen_code(&mut code.borrow_mut());
-//                                } else {
-//                                    println!("CLICK {:?}", pos);
-//                                    state.insert_event(
-//                                        Event::new(PopupEvent::OpenAtCursor)
-//                                        .target(pop)
-//                                        .origin(Entity::root()));
-//                                }
-//                            }
-//                        })
-//                        .on_drag({
-//                            let code = code.clone();
-//                            move |_, _state, _e, pos, pos2, btn| {
-//                                let (id, x, y)    = pos.pos();
-//                                let (id2, x2, y2) = pos2.pos();
-//
-//                                println!("P1={:?} P2={:?}", pos, pos2);
-//
-//                                if let BlockPos::Cell { .. } = pos {
-//                                    if let BlockPos::Block { .. } = pos2 {
-//                                        let _ = code.borrow_mut()
-//                                            .clone_block_from_to(
-//                                                id2, x2, y2, id, x, y);
-//                                        code.borrow_mut()
-//                                            .recalculate_area_sizes();
-//
-//                                        gen_code(&mut code.borrow_mut());
-//                                    }
-//                                } else {
-//                                    if btn == MouseButton::Right {
-//                                        let _ = code.borrow_mut()
-//                                            .move_block_from_to(
-//                                                id, x, y, id2, x2, y2);
-//                                    } else {
-//                                        if pos.pos() == pos2.pos() {
-//                                            let _ = code.borrow_mut()
-//                                                .remove_at(id, x, y);
-//                                        } else {
-//                                            let _ = code.borrow_mut()
-//                                                .move_block_chain_from_to(
-//                                                    id, x, y, id2, x2, y2);
-//                                        }
-//                                    }
-//
-//                                    code.borrow_mut()
-//                                        .recalculate_area_sizes();
-//
-//                                    gen_code(&mut code.borrow_mut());
-//                                }
-//                            }
-//                        })
-//                        .build(state, col, |builder| { builder });
 
                 fn set_text(state: &mut State, wt: Entity, title_clr: usize) {
                     let mut text =
@@ -685,21 +486,27 @@ pub fn main() {
 
                 let wt =
                     WichText::new(style)
-                        .on_click(|_wid, state, ent, _line, _frag, cmd| {
-                            println!("CLICK: [{}]", cmd);
-                            let parts : Vec<&str> = cmd.split("=").collect();
+                        .on_click({
+                            let wl_ctx = wl_ctx.clone();
+                            let queue  = queue.clone();
 
-                            if parts.len() == 2 {
-                                if parts[0] == "TitleClr" {
-                                    set_text(
-                                        state, ent,
-                                        parts[1].parse::<usize>().unwrap_or(0));
-                                }
+                            move |_wid, state, ent, line, frag, cmd| {
+                                exec_cb(
+                                    wl_ctx.clone(),
+                                    vv_wt_click.clone(),
+                                    &[
+                                        VVal::new_str(cmd),
+                                        VVal::Int(line as i64),
+                                        VVal::Int(frag as i64),
+                                    ]);
+                                exec_queue(state, &queue, ent);
                             }
                         })
                         .build(state, row, |builder| { builder });
 
                 set_text(state, wt, 0);
+
+                exec_queue(state, &queue, wt);
 
                 let values = Rc::new(RefCell::new(std::collections::HashMap::new()));
                 state.insert_event(

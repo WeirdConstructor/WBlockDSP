@@ -85,6 +85,8 @@ impl VValUserData for VValBlockLanguage {
                     }
                 });
 
+                println!("DEFINE {:?}", bt);
+
                 self.lang.borrow_mut().define(bt);
 
                 Ok(VVal::None)
@@ -157,6 +159,13 @@ impl VValUserData for VValBlockFun {
 
     fn as_any(&mut self) -> &mut dyn std::any::Any { self }
     fn clone_ud(&self) -> Box<dyn vval::VValUserData> { Box::new(self.clone()) }
+}
+
+pub fn vv2block_fun(mut v: VVal) -> Option<Rc<RefCell<BlockFun>>> {
+    v.with_usr_ref(|model: &mut VValBlockFun| {
+        let r : Rc<RefCell<BlockFun>> = model.code.clone();
+        r
+    })
 }
 
 pub fn vv2block_code_model(mut v: VVal) -> Option<Rc<RefCell<dyn BlockCodeView>>> {
