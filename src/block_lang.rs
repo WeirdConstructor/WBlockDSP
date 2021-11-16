@@ -594,7 +594,7 @@ impl BlockArea {
                     if self.find_port_at(
                         *x + 1, *y + (row as i64), false).is_none()
                     {
-                        sinks_out.push((*x, *y, Some(row)));
+                        sinks_out.push((*x, *y + (row as i64), Some(row)));
                     }
                 });
             }

@@ -1,4 +1,7 @@
-use wblockdsp::{BlockLanguage, BlockFun, BlockType, BlockASTNode};
+use wblockdsp::{
+    BlockLanguage, BlockFun, BlockType,
+    BlockASTNode, BlockUserInput
+};
 
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -94,7 +97,7 @@ fn prepare(blocks: &[(usize, i64, i64, &str, Option<&str>)]) -> Rc<RefCell<Block
         inputs:         vec![],
         outputs:        vec![Some("".to_string())],
         area_count:     0,
-        user_input:     false,
+        user_input:     BlockUserInput::None,
         description:    "The 0.0 value".to_string(),
         color:          1,
     });
@@ -106,7 +109,7 @@ fn prepare(blocks: &[(usize, i64, i64, &str, Option<&str>)]) -> Rc<RefCell<Block
         inputs:         vec![],
         outputs:        vec![Some("".to_string())],
         area_count:     0,
-        user_input:     true,
+        user_input:     BlockUserInput::Float,
         description:    "A literal value, typed in by the user.".to_string(),
         color:          1,
     });
@@ -118,7 +121,7 @@ fn prepare(blocks: &[(usize, i64, i64, &str, Option<&str>)]) -> Rc<RefCell<Block
         inputs:         vec![Some("".to_string())],
         outputs:        vec![Some("".to_string())],
         area_count:     0,
-        user_input:     false,
+        user_input:     BlockUserInput::None,
         description:    "Forwards the value one block".to_string(),
         color:          6,
     });
@@ -130,7 +133,7 @@ fn prepare(blocks: &[(usize, i64, i64, &str, Option<&str>)]) -> Rc<RefCell<Block
         inputs:         vec![Some("".to_string())],
         outputs:        vec![Some("".to_string()), Some("".to_string())],
         area_count:     0,
-        user_input:     false,
+        user_input:     BlockUserInput::None,
         description:    "Forwards the value one block and sends it to multiple destinations".to_string(),
         color:          6,
     });
@@ -142,7 +145,7 @@ fn prepare(blocks: &[(usize, i64, i64, &str, Option<&str>)]) -> Rc<RefCell<Block
         inputs:         vec![Some("".to_string())],
         outputs:        vec![Some("".to_string()), Some("".to_string()), Some("".to_string())],
         area_count:     0,
-        user_input:     false,
+        user_input:     BlockUserInput::None,
         description:    "Forwards the value one block and sends it to multiple destinations".to_string(),
         color:          6,
     });
@@ -154,7 +157,7 @@ fn prepare(blocks: &[(usize, i64, i64, &str, Option<&str>)]) -> Rc<RefCell<Block
         inputs:         vec![Some("".to_string())],
         outputs:        vec![],
         area_count:     0,
-        user_input:     true,
+        user_input:     BlockUserInput::Identifier,
         description:    "Stores into a variable".to_string(),
         color:          2,
     });
@@ -166,7 +169,7 @@ fn prepare(blocks: &[(usize, i64, i64, &str, Option<&str>)]) -> Rc<RefCell<Block
         inputs:         vec![],
         outputs:        vec![Some("".to_string())],
         area_count:     0,
-        user_input:     true,
+        user_input:     BlockUserInput::Identifier,
         description:    "Loads a variable".to_string(),
         color:          12,
     });
@@ -178,7 +181,7 @@ fn prepare(blocks: &[(usize, i64, i64, &str, Option<&str>)]) -> Rc<RefCell<Block
         inputs:         vec![Some("".to_string())],
         outputs:        vec![Some("".to_string())],
         area_count:     2,
-        user_input:     false,
+        user_input:     BlockUserInput::None,
         description:    "Divides the controlflow based on a true (>= 0.5) \
                          or false (< 0.5) input value.".to_string(),
         color:          0,
@@ -191,7 +194,7 @@ fn prepare(blocks: &[(usize, i64, i64, &str, Option<&str>)]) -> Rc<RefCell<Block
         inputs:         vec![Some("in".to_string()), Some("f".to_string())],
         outputs:        vec![Some("lp".to_string()), Some("hp".to_string())],
         area_count:     0,
-        user_input:     false,
+        user_input:     BlockUserInput::None,
         description:    "Runs a simple one pole filter on the input".to_string(),
         color:          8,
     });
@@ -203,7 +206,7 @@ fn prepare(blocks: &[(usize, i64, i64, &str, Option<&str>)]) -> Rc<RefCell<Block
         inputs:         vec![Some("".to_string())],
         outputs:        vec![Some("".to_string())],
         area_count:     0,
-        user_input:     false,
+        user_input:     BlockUserInput::None,
         description:    "Calculates the sine of the input".to_string(),
         color:          16,
     });
@@ -221,7 +224,7 @@ fn prepare(blocks: &[(usize, i64, i64, &str, Option<&str>)]) -> Rc<RefCell<Block
                 },
             outputs:        vec![Some("".to_string())],
             area_count:     0,
-            user_input:     false,
+            user_input:     BlockUserInput::None,
             description:    "A binary arithmetics operation".to_string(),
             color:          4,
         });
@@ -370,6 +373,21 @@ fn check_named_inputs() {
         ], |fun| fun.shift_port(0, 3, 3, 0, false)),
         "<r>[<a>[set:o[-:-[number:0.4(in:b),zero(in:a)]]]]");
 }
+
+#[test]
+fn check_shift_outs() {
+    assert_eq!(
+        gen_do(&[
+            (0, 3, 3, "+", None),
+        ], |fun| fun.shift_port(0, 3, 3, 0, false)),
+        "<r>[<a>[<res>[+:+[zero,zero]]]]");
+    assert_eq!(
+        gen_do(&[
+            (0, 3, 3, "+", None),
+        ], |fun| fun.shift_port(0, 3, 3, 0, true)),
+        "<r>[<a>[<res>[+:+[zero,zero]]]]");
+}
+
 
 #[test]
 fn check_clone_ids() {
