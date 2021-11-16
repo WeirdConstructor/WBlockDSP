@@ -36,7 +36,7 @@ pub struct ASTNode {
 pub struct ASTNodeRef(Rc<RefCell<ASTNode>>);
 
 impl ASTNodeRef {
-    pub fn walk_dump(&self, input: &str, output: &str, indent: usize) {
+    pub fn walk_dump(&self, input: &str, output: &str, indent: usize) -> String {
         let indent_str = "   ".repeat(indent + 1);
 
         let out_port =
@@ -46,14 +46,16 @@ impl ASTNodeRef {
             if input.len() > 0 { format!("(in: {})", input) }
             else { "".to_string() };
 
-        println!(
-            "{}{}#{}[{}] {}{}",
+        let mut s = format!(
+            "{}{}#{}[{}] {}{}\n",
             indent_str, self.0.borrow().id, self.0.borrow().typ,
             self.0.borrow().lbl, out_port, in_port);
 
         for (inp, out, n) in &self.0.borrow().nodes {
-            n.walk_dump(&inp, &out, indent + 1);
+            s += &n.walk_dump(&inp, &out, indent + 1);
         }
+
+        s
     }
 }
 
@@ -72,9 +74,86 @@ impl BlockASTNode for ASTNodeRef {
     }
 }
 
+fn vv2ast_node_ref(mut v: VVal) -> Option<ASTNodeRef> {
+    v.with_usr_ref(|model: &mut ASTNodeRef| model.clone())
+}
+
+impl vval::VValUserData for ASTNodeRef {
+    fn s(&self) -> String {
+        format!("$<ASTNode; id={},typ={}>", self.0.borrow().id, self.0.borrow().typ)
+    }
+
+    fn set_key(&self, key: &VVal, val: VVal) -> Result<(), StackAction> {
+        key.with_s_ref(|s| {
+            match s {
+                "id"  => { self.0.borrow_mut().id  = val.i() as usize; },
+                "typ" => { self.0.borrow_mut().typ = val.s_raw(); },
+                "lbl" => { self.0.borrow_mut().lbl = val.s_raw(); },
+                "nodes" => {
+                    let mut node = self.0.borrow_mut();
+
+                    node.nodes.clear();
+                    val.with_iter(|it| {
+                        for (v, _key) in it {
+                            if let Some(child) = vv2ast_node_ref(v.v_(2)) {
+                                node.nodes.push((
+                                    v.v_s_raw(0),
+                                    v.v_s_raw(1),
+                                    child,
+                                ));
+                            }
+                        }
+                    });
+                },
+                _ => { },
+            }
+
+            Ok(())
+        })
+    }
+
+    fn get_key(&self, key: &str) -> Option<VVal> {
+        match key {
+            "id"  => Some(VVal::Int(self.0.borrow().id as i64)),
+            "typ" => Some(VVal::new_str(&self.0.borrow().typ)),
+            "lbl" => Some(VVal::new_str(&self.0.borrow().lbl)),
+            "nodes" => {
+                let v = VVal::vec();
+                for (inp, out, noderef) in &self.0.borrow().nodes {
+                    v.push(VVal::vec3(
+                        VVal::new_str(inp),
+                        VVal::new_str(out),
+                        VVal::new_usr(noderef.clone())));
+                }
+                Some(v)
+            },
+            _ => None,
+        }
+    }
+
+    fn call_method(&self, key: &str, env: &mut Env)
+        -> Result<VVal, StackAction>
+    {
+        let args = env.argv_ref();
+
+        match key {
+            "dump" => {
+                arg_chk!(args, 0, "ast_node_ref.dump[]");
+
+                Ok(VVal::new_str_mv(self.walk_dump("", "", 0)))
+            },
+            _ => Ok(VVal::err_msg(&format!("Unknown method called: {}", key))),
+        }
+    }
+
+    fn as_any(&mut self) -> &mut dyn std::any::Any { self }
+    fn clone_ud(&self) -> Box<dyn vval::VValUserData> { Box::new(self.clone()) }
+}
+
+
 pub fn gen_code(code: &mut BlockFun) {
     let tree = code.generate_tree::<ASTNodeRef>("zero").unwrap();
-    tree.walk_dump("", "", 0);
+    println!("{}", tree.walk_dump("", "", 0));
 }
 
 pub fn exec_queue(
@@ -132,6 +211,22 @@ pub fn setup_bc_module(queue: Rc<RefCell<Vec<GUIMsg>>>)
 
     set_modfun!(st, vvfun, fun, Some(0), Some(0), _env, _argc, {
         Ok(vvfun.clone())
+    });
+
+    set_modfun!(st, vvfun, generate_ast, Some(1), Some(1), env, _argc, {
+        if let Some(fun) = vv2block_fun(env.arg(0)) {
+            let tree = fun.borrow().generate_tree::<ASTNodeRef>("zero").unwrap();
+            Ok(VVal::new_usr(tree))
+        } else {
+            Ok(VVal::None)
+        }
+    });
+
+    set_modfun!(st, vvfun, new_ast_node, Some(3), Some(3), env, _argc, {
+        let id  = env.arg(0).i() as usize;
+        env.arg(1).with_s_ref(|typ|
+            env.arg(2).with_s_ref(|lbl|
+                Ok(VVal::new_usr::<ASTNodeRef>(BlockASTNode::from(id, typ, lbl)))))
     });
 
     set_modfun!(st, queue, wichtext_set, Some(2), Some(2), env, _argc, {
@@ -389,6 +484,11 @@ pub fn main() {
             .get_global_var("wichtext_click")
             .unwrap_or(VVal::None);
 
+    let vv_bf_change =
+        wl_ctx.borrow_mut()
+            .get_global_var("block_fun_change")
+            .unwrap_or(VVal::None);
+
     let vv_categories =
         wl_ctx.borrow_mut()
             .get_global_var("menu_categories")
@@ -411,12 +511,24 @@ pub fn main() {
 
                 let row = Row::new().build(state, window.entity(), |builder| builder);
 
+                let wt_ref = Rc::new(RefCell::new(Entity::null()));
+
                 let editor =
                     block_code_editor::BlockCodeEditor::new(
                         style.clone(),
                         categories.clone(),
                         lang.clone(),
                         code.clone())
+                    .on_change({
+                        let wl_ctx = wl_ctx.clone();
+                        let queue  = queue.clone();
+                        let wt_ref = wt_ref.clone();
+
+                        move |state, ent, _fun| {
+                            exec_cb(wl_ctx.clone(), vv_bf_change.clone(), &[]);
+                            exec_queue(state, &queue, *wt_ref.borrow());
+                        }
+                    })
                     .build(state, row, |builder| builder);
 
                 fn set_text(state: &mut State, wt: Entity, title_clr: usize) {
@@ -503,6 +615,8 @@ pub fn main() {
                             }
                         })
                         .build(state, row, |builder| { builder });
+
+                (*wt_ref.borrow_mut()) = wt;
 
                 set_text(state, wt, 0);
 

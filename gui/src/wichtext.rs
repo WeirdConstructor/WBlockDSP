@@ -364,8 +364,8 @@ impl WTLine {
         w
     }
 
-    fn finish(&mut self, align: VAlign, wrap: bool, default_h: f32, y: f32) -> f32 {
-        let mut line_h = default_h;
+    fn finish(&mut self, align: VAlign, wrap: bool, y: f32) -> f32 {
+        let mut line_h = 3.0_f32;
         let mut x      = 0.0;
         let mut next_space_w = 0.0;
 
@@ -374,6 +374,7 @@ impl WTLine {
                 x += next_space_w;
             }
 
+            //d// println!("FRAG: {}px for: '{}'", frag.height_px, frag.text);
             line_h = line_h.max(frag.height_px);
             frag.x = x;
 
@@ -579,6 +580,7 @@ impl WichText {
 
             let mut cur_font_size = self.style.font_size;
             let mut cur_fragment  = WTFragment::new(cur_font_size);
+            let mut first_frag    = true;
             let mut in_frag_start = false;
             let mut in_frag       = false;
 
@@ -587,6 +589,8 @@ impl WichText {
 
             while let Some(c) = ci.next() {
                 if in_frag_start {
+                    first_frag = false;
+
                     match c {
                         'L' => {
                             align = VAlign::from_char(ci.next().unwrap_or('b'));
@@ -640,6 +644,17 @@ impl WichText {
                             in_frag_start = false;
                             in_frag       = true;
                         },
+                        ']' => {
+                            cur_fragment.finish(p);
+
+                            frag_line.add(
+                                std::mem::replace(
+                                    &mut cur_fragment,
+                                    WTFragment::new(cur_font_size)));
+
+                            in_frag_start = false;
+                            in_frag       = false;
+                        },
                         _ => {
                             // ignore until ':'
                         },
@@ -673,12 +688,16 @@ impl WichText {
                                 ci.next();
                                 cur_fragment.push_char('[');
                             } else {
-                                cur_fragment.finish(p);
+                                if first_frag && cur_fragment.chars.len() == 0 {
+                                    cur_fragment = WTFragment::new(cur_font_size);
+                                } else {
+                                    cur_fragment.finish(p);
 
-                                frag_line.add(
-                                    std::mem::replace(
-                                        &mut cur_fragment,
-                                        WTFragment::new(cur_font_size)));
+                                    frag_line.add(
+                                        std::mem::replace(
+                                            &mut cur_fragment,
+                                            WTFragment::new(cur_font_size)));
+                                }
 
                                 in_frag_start = true;
                             }
@@ -705,7 +724,7 @@ impl WichText {
                 }
             }
 
-            if cur_fragment.chars.len() > 0 {
+            if first_frag || cur_fragment.chars.len() > 0 {
                 cur_fragment.finish(p);
 
                 frag_line.add(
@@ -714,16 +733,15 @@ impl WichText {
                         WTFragment::new(cur_font_size)));
             }
 
-
             let default_font_h = p.font_height(cur_font_size, true);
-            let line_h = frag_line.finish(align, wordwrap, default_font_h, cur_y);
+            let line_h = frag_line.finish(align, wordwrap, cur_y);
             self.lines.push(frag_line);
 
             cur_y += line_h;
         }
     }
 
-    fn wrap_lines(&mut self, default_h: f32, width: f32) {
+    fn wrap_lines(&mut self, width: f32) {
         self.wrapped_lines.clear();
 
         let mut y = 0.0;
@@ -731,7 +749,7 @@ impl WichText {
         for line in self.lines.iter() {
             if !line.wrap {
                 let mut new_line = line.clone();
-                y += new_line.finish(line.align, false, default_h, y);
+                y += new_line.finish(line.align, false, y);
                 self.wrapped_lines.push(new_line);
                 continue;
             }
@@ -748,7 +766,7 @@ impl WichText {
                     } else { true };
 
                 if add_after || cur_line.calc_cur_w(true, None) > width {
-                    y += cur_line.finish(line.align, true, default_h, y);
+                    y += cur_line.finish(line.align, true, y);
 
                     self.wrapped_lines.push(
                         std::mem::replace(&mut cur_line, WTLine::new()));
@@ -760,7 +778,7 @@ impl WichText {
             }
 
             if cur_line.frags.len() > 0 {
-                y += cur_line.finish(line.align, true, default_h, y);
+                y += cur_line.finish(line.align, true, y);
                 self.wrapped_lines.push(cur_line);
             }
         }
@@ -995,8 +1013,7 @@ impl Widget for WichText {
 
         let width = pos.w.floor() as i64;
         if self.last_width != width {
-            let default_font_h = p.font_height(self.style.font_size, true);
-            self.wrap_lines(default_font_h, pos.w.floor());
+            self.wrap_lines(pos.w.floor());
             self.last_width = width;
         }
 

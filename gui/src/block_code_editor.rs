@@ -74,6 +74,11 @@ const STYLE: &str = r#"
 //        .build(state, parent, |builder| builder);
 //}
 
+#[derive(Clone)]
+pub enum BlockCodeEditorMessage {
+    SetCode(Rc<RefCell<BlockFun>>),
+}
+
 
 pub struct BlockCodeEditor {
     lang:        Rc<RefCell<BlockLanguage>>,
@@ -83,8 +88,10 @@ pub struct BlockCodeEditor {
 
     category_order: Vec<String>,
 
+    bc_entity:  Entity,
+
     on_query_input: Rc<dyn Fn(&mut State, Entity, &str, Rc<dyn Fn(&mut State, String)>)>,
-    on_change:      Rc<dyn Fn(&mut Self, &mut State, Entity, Rc<RefCell<BlockFun>>)>,
+    on_change:      Rc<dyn Fn(&mut State, Entity, Rc<RefCell<BlockFun>>)>,
 }
 
 impl BlockCodeEditor {
@@ -100,7 +107,8 @@ impl BlockCodeEditor {
             category_order,
             lang,
             code,
-            on_change:      Rc::new(|_, _, _, _| {}),
+            bc_entity:      Entity::null(),
+            on_change:      Rc::new(|_, _, _| {}),
             on_query_input: Rc::new(|state, _, _, cb| { cb(state, "1.2".to_string()) }),
             current_pos: Rc::new(RefCell::new(
                 BlockPos::Cell { id: 0, x: 0, y: 0 })),
@@ -118,7 +126,7 @@ impl BlockCodeEditor {
 
     pub fn on_change<F>(mut self, on_change: F) -> Self
     where
-        F: 'static + Fn(&mut Self, &mut State, Entity, Rc<RefCell<BlockFun>>),
+        F: 'static + Fn(&mut State, Entity, Rc<RefCell<BlockFun>>),
     {
         self.on_change = Rc::new(on_change);
 
@@ -180,6 +188,7 @@ impl Widget for BlockCodeEditor {
             Rc::new({
                 let code        = self.code.clone();
                 let current_pos = self.current_pos.clone();
+                let on_change   = self.on_change.clone();
 
                 move |state: &mut State, typ: &str, val: Option<String>| {
                     let (id, x, y) = current_pos.borrow().pos();
@@ -196,6 +205,8 @@ impl Widget for BlockCodeEditor {
                         Event::new(PopupEvent::Close)
                         .target(pop)
                         .origin(Entity::root()));
+
+                    (*on_change)(state, entity, code.clone());
                 }
             });
 
@@ -328,6 +339,7 @@ impl Widget for BlockCodeEditor {
                 .on_click({
                     let code        = self.code.clone();
                     let current_pos = self.current_pos.clone();
+                    let on_change   = self.on_change.clone();
 
                     move |_, state, _e, pos, btn| {
                         (*current_pos.borrow_mut()) = pos;
@@ -354,11 +366,7 @@ impl Widget for BlockCodeEditor {
                             code.borrow_mut()
                                 .recalculate_area_sizes();
 
-//                            gen_code(&mut code.borrow_mut());
-//                            if let Some(cb) = editor.on_change.take() {
-//                                (*cb)(editor, state, entity, code.clone());
-//                                editor.on_change = Some(cb);
-//                            }
+                            (*on_change)(state, entity, code.clone());
                         } else {
                             println!("CLICK {:?}", pos);
                             state.insert_event(
@@ -369,9 +377,10 @@ impl Widget for BlockCodeEditor {
                     }
                 })
                 .on_drag({
-                    let code = self.code.clone();
+                    let code      = self.code.clone();
+                    let on_change = self.on_change.clone();
 
-                    move |_, _state, _e, pos, pos2, btn| {
+                    move |_, state, _e, pos, pos2, btn| {
                         let (id, x, y)    = pos.pos();
                         let (id2, x2, y2) = pos2.pos();
 
@@ -385,10 +394,7 @@ impl Widget for BlockCodeEditor {
                                 code.borrow_mut()
                                     .recalculate_area_sizes();
 
-//                                if let Some(cb) = editor.on_change.take() {
-//                                    (*cb)(editor, state, entity, code.clone());
-//                                    editor.on_change = Some(cb);
-//                                }
+                                (*on_change)(state, entity, code.clone());
                             }
                         } else {
                             if btn == MouseButton::Right {
@@ -409,14 +415,13 @@ impl Widget for BlockCodeEditor {
                             code.borrow_mut()
                                 .recalculate_area_sizes();
 
-//                            if let Some(cb) = editor.on_change.take() {
-//                                (*cb)(editor, state, entity, code.clone());
-//                                editor.on_change = Some(cb);
-//                            }
+                            (*on_change)(state, entity, code.clone());
                         }
                     }
                 })
                 .build(state, entity, |builder| { builder });
+
+        self.bc_entity = bc;
 
         state.insert_event(
             Event::new(BlockCodeMessage::SetCode(self.code.clone()))
@@ -426,16 +431,15 @@ impl Widget for BlockCodeEditor {
     }
 
     fn on_event(&mut self, state: &mut State, entity: Entity, event: &mut Event) {
-//        if let Some(grid_msg) = event.message.downcast::<BlockCodeMessage>() {
-//            match grid_msg {
-//                BlockCodeMessage::SetCode(code) => {
-//                    self.code = code.clone();
-//                    state.insert_event(
-//                        Event::new(WindowEvent::Redraw)
-//                        .target(Entity::root()));
-//                },
-//            }
-//        }
-//
+        if let Some(grid_msg) = event.message.downcast::<BlockCodeEditorMessage>() {
+            match grid_msg {
+                BlockCodeEditorMessage::SetCode(code) => {
+                    self.code = code.clone();
+                    state.insert_event(
+                        Event::new(BlockCodeMessage::SetCode(self.code.clone()))
+                        .target(self.bc_entity));
+                },
+            }
+        }
     }
 }
