@@ -1,5 +1,7 @@
 mod block_code_model;
+mod jit;
 pub use block_code_model::*;
+pub use jit::*;
 
 #[macro_export]
 macro_rules! arg_chk {

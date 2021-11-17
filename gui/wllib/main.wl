@@ -22,6 +22,7 @@
 
     !wt_dump_lines = $[];
     iter l ($p('\n', 0) dump) {
+        !l = ($p("[", "[[") l);
         std:displayln "LINE:" l;
         std:push wt_dump_lines ~ $F "[f14:]{}" l;
     };

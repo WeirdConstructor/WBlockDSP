@@ -80,7 +80,11 @@ fn vv2ast_node_ref(mut v: VVal) -> Option<ASTNodeRef> {
 
 impl vval::VValUserData for ASTNodeRef {
     fn s(&self) -> String {
-        format!("$<ASTNode; id={},typ={}>", self.0.borrow().id, self.0.borrow().typ)
+        format!(
+            "$<BlockASTNode; id={},typ={},lbl={}>",
+            self.0.borrow().id,
+            self.0.borrow().typ,
+            self.0.borrow().lbl)
     }
 
     fn set_key(&self, key: &VVal, val: VVal) -> Result<(), StackAction> {

@@ -588,6 +588,7 @@ impl WichText {
             let mut wordwrap = false;
 
             while let Some(c) = ci.next() {
+                //d// println!("CHAR:'{}' {},{}", c, in_frag_start, in_frag);
                 if in_frag_start {
                     first_frag = false;
 
@@ -662,7 +663,8 @@ impl WichText {
                 } else if in_frag {
                     match c {
                         ']' => {
-                            if let Some(']') = ci.peek() {
+                            let c2 = ci.peek().copied().unwrap_or('\0');
+                            if c2 == ']' {
                                 ci.next();
                                 cur_fragment.push_char(']');
                             } else {
@@ -684,7 +686,8 @@ impl WichText {
                 } else {
                     match c {
                         '[' => {
-                            if let Some('[') = ci.peek() {
+                            let c2 = ci.peek().copied().unwrap_or('\0');
+                            if c2 == '[' {
                                 ci.next();
                                 cur_fragment.push_char('[');
                             } else {

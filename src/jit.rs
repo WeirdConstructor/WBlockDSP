@@ -21,17 +21,6 @@ pub enum ASTBinOp {
 }
 
 #[derive(Debug, Clone)]
-pub enum ASTIfOp {
-    IsTrue(Box<ASTNode>),
-    Eq(Box<ASTNode>, Box<ASTNode>),
-    Ne(Box<ASTNode>, Box<ASTNode>),
-    Lt(Box<ASTNode>, Box<ASTNode>),
-    Le(Box<ASTNode>, Box<ASTNode>),
-    Gt(Box<ASTNode>, Box<ASTNode>),
-    Ge(Box<ASTNode>, Box<ASTNode>),
-}
-
-#[derive(Debug, Clone)]
 pub struct ASTFun {
     params: Vec<String>,
     locals: Vec<String>,
@@ -44,13 +33,13 @@ impl ASTFun {
             params: vec![
                 "in1".to_string(),
                 "in2".to_string(),
-//                "alpha".to_string(),
-//                "beta".to_string(),
-//                "delta".to_string(),
-//                "gamma".to_string(),
+                "alpha".to_string(),
+                "beta".to_string(),
+                "delta".to_string(),
+                "gamma".to_string(),
                 "&sig1".to_string(),
                 "&sig2".to_string(),
-//                "state".to_string(),
+                "state".to_string(),
             ],
             locals: vec![], // vec!["x".to_string(), "y".to_string()],
             ast,
@@ -64,9 +53,67 @@ pub enum ASTNode {
     Var(String),
     Assign(String, Box<ASTNode>),
     BinOp(ASTBinOp, Box<ASTNode>, Box<ASTNode>),
-    If(ASTIfOp, Box<ASTNode>, Option<Box<ASTNode>>),
+    If(Box<ASTNode>, Box<ASTNode>, Option<Box<ASTNode>>),
     Call(String, Box<ASTNode>),
     Stmts(Vec<Box<ASTNode>>),
+}
+
+impl ASTNode {
+    pub fn to_string(&self) -> String {
+        match self {
+            ASTNode::Lit(v)          => format!("lit:{:6.4}", v),
+            ASTNode::Var(v)          => format!("var:{}",     v),
+            ASTNode::Assign(v, _)    => format!("assign:{}",  v),
+            ASTNode::BinOp(op, _, _) => format!("binop:{:?}", op),
+            ASTNode::If(_, _, _)     => format!("if"),
+            ASTNode::Call(fun, _)    => format!("call1:{}", fun),
+            ASTNode::Stmts(stmts)    => format!("stmts:{}", stmts.len()),
+        }
+    }
+
+    pub fn typ_str(&self) -> &str {
+        match self {
+            ASTNode::Lit(v)          => "lit",
+            ASTNode::Var(v)          => "var",
+            ASTNode::Assign(v, _)    => "assign",
+            ASTNode::BinOp(op, _, _) => "binop",
+            ASTNode::If(_, _, _)     => "if",
+            ASTNode::Call(fun, _)    => "call1",
+            ASTNode::Stmts(stmts)    => "stmts",
+        }
+    }
+
+    pub fn dump(&self, indent: usize) -> String {
+        let indent_str = "   ".repeat(indent + 1);
+        let mut s = indent_str + &self.to_string() + "\n";
+
+        match self {
+            ASTNode::Lit(_)         => (),
+            ASTNode::Var(_)         => (),
+            ASTNode::Assign(_, e)   => { s += &e.dump(indent + 1); },
+            ASTNode::BinOp(_, a, b) => {
+                s += &a.dump(indent + 1);
+                s += &b.dump(indent + 1);
+            },
+            ASTNode::If(c, a, b) => {
+                s += &c.dump(indent + 1);
+                s += &a.dump(indent + 1);
+                if let Some(n) = b {
+                    s += &n.dump(indent + 1);
+                }
+            },
+            ASTNode::Call(_, a) => {
+                s += &a.dump(indent + 1);
+            },
+            ASTNode::Stmts(stmts) => {
+                for n in stmts {
+                    s += &n.dump(indent + 1);
+                }
+            },
+        }
+
+        s
+    }
 }
 
 /// The basic JIT class.
@@ -338,19 +385,12 @@ impl<'a> FunctionTranslator<'a> {
                 let call = self.builder.ins().call(local_callee, &[value_arg]);
                 self.builder.inst_results(call)[0]
             },
-            ASTNode::If(ifop, then, els) => {
+            ASTNode::If(cond, then, els) => {
+                let res = self.compile(cond);
+                let cmpv = self.builder.ins().f64const(0.5);
                 let condition_value =
-                    match ifop {
-                        ASTIfOp::IsTrue(expr) => {
-                            let res = self.compile(expr);
-                            let cmpv = self.builder.ins().f64const(0.5);
-                            self.builder.ins().fcmp(
-                                FloatCC::GreaterThanOrEqual, res, cmpv)
-                        },
-                        _ => {
-                            self.builder.ins().iconst(ptr_type, 1)
-                        },
-                    };
+                    self.builder.ins().fcmp(
+                        FloatCC::GreaterThanOrEqual, res, cmpv);
 
                 let then_block = self.builder.create_block();
                 let else_block = self.builder.create_block();
