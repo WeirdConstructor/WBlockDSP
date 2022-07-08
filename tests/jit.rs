@@ -31,11 +31,18 @@ fn check_jit() {
 
     let fun = ASTFun::new(Box::new(ast));
     let code = jit.compile(fun).unwrap();
-    let ptr_b = unsafe { mem::transmute::<_, fn(f64, f64, f64, f64, f64, f64, *mut f64, *mut f64, f64) -> f64>(code) };
+    let ptr_b = unsafe {
+        mem::transmute::<_, fn(f64, f64, f64, f64, f64, f64, *mut f64, *mut f64, *mut DSPState) -> f64>(code)
+    };
+
     let mut s1 = 0.0;
     let mut s2 = 0.0;
-    let res1 = ptr_b(1.0, 0.0, 3.0, 4.0, 5.0, 6.0, &mut s1, &mut s2, 0.0);
-    let res2 = ptr_b(22.0, 1.0, 3.0, 4.0, 5.0, 6.0, &mut s1, &mut s2, 0.0);
+    let mut state = DSPState { x: 11.0 };
+    let res1 = ptr_b(1.0, 0.0, 3.0, 4.0, 5.0, 6.0, &mut s1, &mut s2, &mut state);
     assert_float_eq!(res1, 100.12);
+    assert_float_eq!(state.x, 11.0);
+
+    let res2 = ptr_b(22.0, 1.0, 3.0, 4.0, 5.0, 6.0, &mut s1, &mut s2, &mut state);
     assert_float_eq!(res2, 11.0 * 10000.0 + 1.0 + 22.0);
+    assert_float_eq!(state.x, 11.0 * 22.0);
 }

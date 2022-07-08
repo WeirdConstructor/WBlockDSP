@@ -42,7 +42,7 @@ impl ASTFun {
                 "gamma".to_string(),
                 "&sig1".to_string(),
                 "&sig2".to_string(),
-                "state".to_string(),
+                "&state".to_string(),
             ],
             locals: vec![], // vec!["x".to_string(), "y".to_string()],
             ast,
@@ -262,7 +262,12 @@ struct FunctionTranslator<'a> {
     func:       Option<FuncId>,
 }
 
-pub fn test(x: f64) -> f64 {
+pub struct DSPState {
+    pub x: f64,
+}
+
+pub fn test(x: f64, state: *mut DSPState) -> f64 {
+    unsafe { (*state).x = x * 22.0; };
     x * 10000.0 + 1.0
 }
 
@@ -282,8 +287,11 @@ impl<'a> FunctionTranslator<'a> {
         //       also need some compiler error handling for this at some
         //       point!
         // (see also https://zmedley.com/calling-rust.html)
+        let ptr_type = self.module.target_config().pointer_type();
+
         let mut sig = self.module.make_signature();
         sig.params.push(AbiParam::new(F64));
+        sig.params.push(AbiParam::new(ptr_type));
         sig.returns.push(AbiParam::new(F64));
 
         self.func = Some(
@@ -390,12 +398,17 @@ impl<'a> FunctionTranslator<'a> {
                 self.builder.ins().fadd(value_a, value_b)
             },
             ASTNode::Call(name, arg) => {
+                let state_var = self.variables.get("&state").unwrap();
+                let ptr = self.builder.use_var(*state_var);
+//                let state_value =
+//                    self.builder.ins().load(I64, MemFlags::new(), ptr, 0);
+
                 let value_arg = self.compile(arg);
                 let local_callee =
                     self.module
                     .declare_func_in_func(
                         self.func.unwrap(), &mut self.builder.func);
-                let call = self.builder.ins().call(local_callee, &[value_arg]);
+                let call = self.builder.ins().call(local_callee, &[value_arg, ptr]);
                 self.builder.inst_results(call)[0]
             },
             ASTNode::If(cond, then, els) => {
