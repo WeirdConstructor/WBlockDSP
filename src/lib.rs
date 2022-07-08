@@ -25,6 +25,7 @@ use core::mem;
 //            ))
 //        }, Some(2), Some(2));
 //
+//    let global_env = wlambda::GlobalEnv::new_default();
 //    let mut ctx = wlambda::compiler::EvalContext::new(global_env);
 //
 //    let res_add : VVal = ctx.eval("my_crazy_add 2 4").unwrap();

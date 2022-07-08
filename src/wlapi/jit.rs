@@ -8,7 +8,7 @@ use wlambda::*;
 use crate::arg_chk;
 
 impl VValUserData for Box<ASTNode> {
-    fn s(&self) -> String { format!("$<JITASTNode:{:?}>", self.to_string()) }
+    fn s(&self) -> String { format!("$<JIT::ASTNode:{:?}>", self.to_string()) }
 
     fn call_method(&self, key: &str, env: &mut Env)
         -> Result<VVal, StackAction>
@@ -32,8 +32,11 @@ impl VValUserData for Box<ASTNode> {
     fn clone_ud(&self) -> Box<dyn vval::VValUserData> { Box::new(self.clone()) }
 }
 
-pub fn vv2ast_node(v: VVal) -> Option<Box<ASTNode>> {
-    if v.iter_over_vvals() {
+pub fn vv2ast_node(mut v: VVal) -> Option<Box<ASTNode>> {
+    if let VVal::Usr(_) = v {
+        v.with_usr_ref(|node: &mut Box<ASTNode>| node.clone())
+
+    } else if v.iter_over_vvals() {
         v.v_(0).with_s_ref(|s| {
             match s {
                 "assign" => {
@@ -54,4 +57,21 @@ pub fn vv2ast_node(v: VVal) -> Option<Box<ASTNode>> {
             Some(Box::new(ASTNode::Var(v.s_raw())))
         }
     }
+}
+
+pub fn setup_jit_module() -> wlambda::SymbolTable {
+    let mut st = wlambda::SymbolTable::new();
+
+    st.fun(
+        "node", move |env: &mut Env, _argc: usize| {
+            if let Some(node) = vv2ast_node(env.arg(0)) {
+                Ok(VVal::new_usr(node))
+            } else {
+                return Err(StackAction::panic_msg(
+                    format!(
+                        "Invalid $<JIT::ASTNode> value: {}",
+                        env.arg(0).s())))
+            }
+        }, Some(1), Some(1), false);
+    st
 }
