@@ -11,7 +11,7 @@ pub mod wlapi;
 pub use block_view::*;
 pub use block_lang::*;
 
-use jit::*;
+pub use jit::*;
 use core::mem;
 
 //fn main() {

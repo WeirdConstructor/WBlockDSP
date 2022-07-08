@@ -3,6 +3,9 @@ use cranelift::prelude::types::F64;
 use cranelift::prelude::InstBuilder;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataContext, Linkage, Module, FuncId};
+use cranelift_module::{default_libcall_names};
+use cranelift_codegen::settings::{self, Configurable};
+use std::mem;
 use std::collections::HashMap;
 use std::slice;
 
@@ -137,9 +140,19 @@ pub struct JIT {
 
 impl Default for JIT {
     fn default() -> Self {
-        let mut builder = JITBuilder::new(cranelift_module::default_libcall_names());
-
+        let mut flag_builder = settings::builder();
+        flag_builder.set("use_colocated_libcalls", "false").unwrap();
+        // FIXME set back to true once the x64 backend supports it.
+        flag_builder.set("is_pic", "false").unwrap();
+        let isa_builder = cranelift_native::builder().unwrap_or_else(|msg| {
+            panic!("host machine is not supported: {}", msg);
+        });
+        let isa = isa_builder
+            .finish(settings::Flags::new(flag_builder))
+            .unwrap();
+        let mut builder = JITBuilder::with_isa(isa, default_libcall_names());
         builder.symbol("test", test as *const u8);
+
         let module = JITModule::new(builder);
         Self {
             builder_context: FunctionBuilderContext::new(),
@@ -163,19 +176,18 @@ impl JIT {
             };
         }
 
-        // Then, translate the AST nodes into Cranelift IR.
-        self.translate(prog)?;
-
         let id = self
             .module
             .declare_function("dsp", Linkage::Export, &self.ctx.func.signature)
             .map_err(|e| e.to_string())?;
 
+        self.ctx.func.name = ExternalName::user(0, id.as_u32());
+
+        // Then, translate the AST nodes into Cranelift IR.
+        self.translate(prog)?;
+
         self.module
-            .define_function(
-                id, &mut self.ctx,
-                &mut codegen::binemit::NullTrapSink {},
-                &mut codegen::binemit::NullStackMapSink {})
+            .define_function(id, &mut self.ctx)
             .map_err(|e| e.to_string())?;
 
         self.module.clear_context(&mut self.ctx);
@@ -318,6 +330,7 @@ impl<'a> FunctionTranslator<'a> {
                 } else {
                     self.declare_variable(F64, param_name)
                 };
+            println!("DEF VAR: {}", param_name);
             self.builder.def_var(var, val);
         }
 
