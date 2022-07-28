@@ -40,18 +40,26 @@ pub struct JIT {
 impl JIT {
     pub fn new(dsp_lib: Rc<RefCell<DSPNodeTypeLibrary>>) -> Self {
         let mut flag_builder = settings::builder();
-        flag_builder.set("use_colocated_libcalls", "false").unwrap();
+        flag_builder
+            .set("use_colocated_libcalls", "false")
+            .expect("Setting 'use_colocated_libcalls' works");
         // FIXME set back to true once the x64 backend supports it.
-        flag_builder.set("is_pic", "false").unwrap();
+        flag_builder.set("is_pic", "false").expect("Setting 'is_pic' works");
         let isa_builder = cranelift_native::builder().unwrap_or_else(|msg| {
             panic!("host machine is not supported: {}", msg);
         });
-        let isa = isa_builder.finish(settings::Flags::new(flag_builder)).unwrap();
+        let isa = isa_builder
+            .finish(settings::Flags::new(flag_builder))
+            .expect("ISA Builder finish works");
         let mut builder = JITBuilder::with_isa(isa, default_libcall_names());
 
-        dsp_lib.borrow().for_each(|typ| {
-            builder.symbol(typ.name(), typ.function_ptr());
-        });
+        dsp_lib
+            .borrow()
+            .for_each(|typ| -> Result<(), JITCompileError> {
+                builder.symbol(typ.name(), typ.function_ptr());
+                Ok(())
+            })
+            .expect("symbol adding works");
         //        builder.symbol("sin", std::primitive::f64::sin as *const u8);
 
         let module = JITModule::new(builder);
@@ -100,26 +108,6 @@ impl JIT {
 
         Ok(code)
     }
-
-    //    /// Create a zero-initialized data section.
-    //    pub fn create_data(&mut self, name: &str, contents: Vec<u8>) -> Result<&[u8], String> {
-    //        // The steps here are analogous to `compile`, except that data is much
-    //        // simpler than functions.
-    //        self.data_ctx.define(contents.into_boxed_slice());
-    //        let id = self
-    //            .module
-    //            .declare_data(name, Linkage::Export, true, false)
-    //            .map_err(|e| e.to_string())?;
-    //
-    //        self.module
-    //            .define_data(id, &self.data_ctx)
-    //            .map_err(|e| e.to_string())?;
-    //        self.data_ctx.clear();
-    //        self.module.finalize_definitions();
-    //        let buffer = self.module.get_finalized_data(id);
-    //        // TODO: Can we move the unsafe into cranelift?
-    //        Ok(unsafe { slice::from_raw_parts(buffer.0, buffer.1) })
-    //    }
 
     // Translate from toy-language AST nodes into Cranelift IR.
     fn translate(&mut self, fun: ASTFun) -> Result<(), JITCompileError> {
@@ -311,10 +299,14 @@ impl DSPNodeTypeLibrary {
         self.types.push(typ);
     }
 
-    pub fn for_each<F: FnMut(&Rc<dyn DSPNodeType>)>(&self, mut f: F) {
+    pub fn for_each<T, F: FnMut(&Rc<dyn DSPNodeType>) -> Result<(), T>>(
+        &self,
+        mut f: F,
+    ) -> Result<(), T> {
         for t in self.types.iter() {
-            f(&t);
+            f(&t)?;
         }
+        Ok(())
     }
 }
 
@@ -419,7 +411,7 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
         }
     }
 
-    pub fn register_functions(&mut self) {
+    pub fn register_functions(&mut self) -> Result<(), JITCompileError> {
         // TODO: manage these imports and signature stuff properly!
         //       also need some compiler error handling for this at some
         //       point!
@@ -449,13 +441,16 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
             let func_id = self
                 .module
                 .declare_function(typ.name(), cranelift_module::Linkage::Import, &sig)
-                .map_err(|e| e.to_string())
-                .unwrap();
+                .map_err(|e| JITCompileError::DeclareTopFunError(e.to_string()))?;
 
             functions.insert(typ.name().to_string(), (typ.clone(), func_id));
-        });
+
+            Ok(())
+        })?;
 
         self.functions = functions;
+
+        Ok(())
 
         //        let mut sig = self.module.make_signature();
         //        sig.params.push(AbiParam::new(F64));
@@ -633,10 +628,16 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
                     // TODO: Then use the DSPNodeContext to allocate and prepare the
                     //       &state and &fstate locals!
                     let ptr_type = self.module.target_config().pointer_type();
-                    let state_var = self.variables.get("&state").unwrap();
+                    let state_var = self
+                        .variables
+                        .get("&state")
+                        .ok_or_else(|| JITCompileError::UndefinedVariable("&state".to_string()))?;
                     let ptr = self.builder.use_var(*state_var);
 
-                    let fstate_var = self.variables.get("&fstate").unwrap();
+                    let fstate_var = self
+                        .variables
+                        .get("&fstate")
+                        .ok_or_else(|| JITCompileError::UndefinedVariable("&fstate".to_string()))?;
                     let fptr = self.builder.use_var(*fstate_var);
                     let func_state = self.builder.ins().load(
                         ptr_type,
