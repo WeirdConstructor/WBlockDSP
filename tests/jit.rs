@@ -36,8 +36,8 @@ fn check_jit() {
 
     let fun = ASTFun::new(Box::new(ast));
     let code = jit.compile(fun).unwrap();
-    let tst_ptr = Box::into_raw(Box::new(TSTState { l: 44.53 }));
-    let tst2_ptr = Box::into_raw(Box::new(DSPState { x: 46.53, y: 1.0 }));
+    let tst_ptr = Box::into_raw(Box::new(TSTState { l: 44.53, srate: 0.0 }));
+    let tst2_ptr = Box::into_raw(Box::new(DSPState { x: 46.53, y: 1.0, srate: 0.0 }));
     let mut states: Vec<*mut std::ffi::c_void> =
         vec![tst2_ptr as *mut std::ffi::c_void, tst_ptr as *mut std::ffi::c_void];
     let states_ptr: *mut *mut std::ffi::c_void = states.as_mut_ptr();
@@ -61,7 +61,7 @@ fn check_jit() {
 
     let mut s1 = 0.0;
     let mut s2 = 0.0;
-    let mut state = DSPState { x: 11.0, y: 1.0 };
+    let mut state = DSPState { x: 11.0, y: 1.0, srate: 0.0 };
     let res1 = ptr_b(1.0, 0.0, 3.0, 4.0, 5.0, 6.0, &mut s1, &mut s2, &mut state, states_ptr);
     assert_float_eq!(res1, 100.12);
     assert_float_eq!(state.x, 11.0);
@@ -103,7 +103,7 @@ fn check_jit_stmts() {
 
     let mut s1 = 0.0;
     let mut s2 = 0.0;
-    let mut state = DSPState { x: 0.0, y: 1.0 };
+    let mut state = DSPState { x: 0.0, y: 1.0, srate: 0.0 };
     let res1 = ptr_b(
         1.1,
         2.2,
@@ -146,7 +146,7 @@ fn run_ast(ast: Box<ASTNode>, in1: f64, in2: f64) -> (f64, f64, f64) {
 
     let mut s1 = 0.0;
     let mut s2 = 0.0;
-    let mut state = DSPState { x: 0.0, y: 1.0 };
+    let mut state = DSPState { x: 0.0, y: 1.0, srate: 0.0 };
     let res1 = ptr_b(
         in1,
         in2,
@@ -190,7 +190,7 @@ fn check_jit_sin() {
 
     let mut s1 = 0.0;
     let mut s2 = 0.0;
-    let mut state = DSPState { x: 0.0, y: 1.0 };
+    let mut state = DSPState { x: 0.0, y: 1.0, srate: 0.0 };
     let res1 = ptr_b(
         1.1,
         2.2,

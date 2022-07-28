@@ -10,7 +10,7 @@ use cranelift_codegen::ir::immediates::Offset32;
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::default_libcall_names;
-use cranelift_module::{DataContext, FuncId, Linkage, Module};
+use cranelift_module::{FuncId, Linkage, Module};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::mem;
@@ -149,6 +149,7 @@ struct DSPFunctionTranslator<'a, 'b> {
 pub struct DSPState {
     pub x: f64,
     pub y: f64,
+    pub srate: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -176,6 +177,12 @@ pub trait DSPNodeType {
     /// Should return true if the function for [DSPNodeType::function_ptr]
     /// returns something.
     fn has_return_value(&self) -> bool;
+
+    /// Will be called when the node state should be resetted.
+    /// This should be used to store the sample rate for instance or
+    /// do other sample rate dependent recomputations.
+    /// Also things delay lines should zero their buffers.
+    fn reset_state(&self, _dsp_state: *mut DSPState, _state_ptr: *mut u8) {}
 
     /// Allocates a new piece of state for this [DSPNodeType].
     /// Must be deallocated using [DSPNodeType::deallocate_state].
@@ -325,7 +332,7 @@ pub struct DSPNodeContext {
 impl DSPNodeContext {
     pub fn new() -> Self {
         Self {
-            state: Box::into_raw(Box::new(DSPState { x: 0.0, y: 0.0 })),
+            state: Box::into_raw(Box::new(DSPState { x: 0.0, y: 0.0, srate: 44100.0 })),
             func_states: HashMap::new(),
             generation: 0,
         }
@@ -339,31 +346,33 @@ impl Drop for DSPNodeContext {
     }
 }
 
+/// This is the result of the JIT compiled [ASTNode] tree.
+/// You can send this structure to the audio backend thread and execute it
+/// using [DSPFunction::exec].
+///
+/// To execute this [DSPFunction] properly, you have to call [DSPFunction::init]
+/// once the newly allocated structure is received by the DSP executing thread.
+///
+/// If the sample rate changes or the stateful DSP stuff must be resetted,
+/// you should call [DSPFunction::reset] or [DSPFunction::set_sample_rate].
+/// Of course also only on the DSP executing thread.
 pub struct DSPFunction {
     state: *mut DSPState,
+    func_state_types: Vec<Rc<dyn DSPNodeType>>,
     func_states: Vec<*mut u8>,
-    function: Box<
-        dyn Fn(
-            f64,
-            f64,
-            f64,
-            f64,
-            f64,
-            f64,
-            *mut f64,
-            *mut f64,
-            *mut DSPState,
-            *mut *mut std::ffi::c_void,
-        ) -> f64,
-    >,
+    func_state_init_reset: Vec<usize>,
+    function:
+        fn(f64, f64, f64, f64, f64, f64, *mut f64, *mut f64, *mut DSPState, *mut *mut u8) -> f64,
 }
 
 impl DSPFunction {
-    pub fn new(state: *mut DSPState, function: *const u8) -> Self {
+    pub fn new(state: *mut DSPState) -> Self {
         Self {
             state,
+            func_state_types: vec![],
             func_states: vec![],
-            function: Box::new(unsafe {
+            func_state_init_reset: vec![],
+            function: unsafe {
                 mem::transmute::<
                     _,
                     fn(
@@ -376,11 +385,67 @@ impl DSPFunction {
                         *mut f64,
                         *mut f64,
                         *mut DSPState,
-                        *mut *mut std::ffi::c_void,
+                        *mut *mut u8,
                     ) -> f64,
-                >(function)
-            }),
+                >(std::ptr::null::<*const u8>())
+            },
         }
+    }
+
+    pub fn set_function_ptr(&mut self, function: *const u8) {
+        self.function = unsafe {
+            mem::transmute::<
+                _,
+                fn(
+                    f64,
+                    f64,
+                    f64,
+                    f64,
+                    f64,
+                    f64,
+                    *mut f64,
+                    *mut f64,
+                    *mut DSPState,
+                    *mut *mut u8,
+                ) -> f64,
+            >(function)
+        };
+    }
+
+    pub fn init(&mut self) {
+        for idx in self.func_state_init_reset.iter() {
+            let typ = &self.func_state_types[*idx];
+            let ptr = self.func_states[*idx];
+            typ.reset_state(self.state, ptr);
+        }
+    }
+
+    pub fn set_sample_rate(&mut self, srate: f64) {
+        unsafe {
+            (*self.state).srate = srate;
+        }
+        self.reset();
+    }
+
+    pub fn reset(&mut self) {
+        for (typ, ptr) in self.func_state_types.iter().zip(self.func_states.iter_mut()) {
+            typ.reset_state(self.state, *ptr);
+        }
+    }
+
+    pub fn exec(
+        &mut self,
+        in1: f64,
+        in2: f64,
+        alpha: f64,
+        beta: f64,
+        delta: f64,
+        gamma: f64,
+        sig1: &mut f64,
+        sig2: &mut f64,
+    ) -> f64 {
+        let states_ptr: *mut *mut u8 = self.func_states.as_mut_ptr();
+        (self.function)(in1, in2, alpha, beta, delta, gamma, sig1, sig2, self.state, states_ptr)
     }
 }
 
@@ -986,11 +1051,12 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
 
 pub struct TSTState {
     pub l: f64,
+    pub srate: f64,
 }
 
 impl TSTState {
     pub fn new() -> Self {
-        Self { l: 0.0 }
+        Self { l: 0.0, srate: 0.0 }
     }
 }
 
@@ -999,6 +1065,7 @@ pub fn test(x: f64, state: *mut DSPState, mystate: *mut std::ffi::c_void) -> f64
         let p = mystate as *mut TSTState;
         (*state).x = x * 22.0;
         (*state).y = (*p).l;
+        println!("TEST CALL srate={}", (*p).srate);
     };
     x * 10000.0 + 1.0
 }
@@ -1027,8 +1094,15 @@ impl DSPNodeType for TestNodeType {
         true
     }
 
+    fn reset_state(&self, dsp_state: *mut DSPState, state_ptr: *mut u8) {
+        let ptr = state_ptr as *mut TSTState;
+        unsafe {
+            (*ptr).srate = (*dsp_state).srate;
+        }
+    }
+
     fn allocate_state(&self) -> Option<*mut u8> {
-        Some(Box::into_raw(Box::new(TSTState { l: 0.0 })) as *mut u8)
+        Some(Box::into_raw(Box::new(TSTState { l: 0.0, srate: 0.0 })) as *mut u8)
     }
 
     fn deallocate_state(&self, ptr: *mut u8) {
