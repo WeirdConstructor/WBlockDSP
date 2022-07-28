@@ -1,6 +1,6 @@
-use crate::block_view::{BlockView, BlockCodeView};
-use std::rc::Rc;
+use crate::block_view::{BlockCodeView, BlockView};
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -13,14 +13,20 @@ pub struct BlockIDGenerator {
 
 impl BlockIDGenerator {
     pub fn new() -> Self {
-        Self { counter: Rc::new(RefCell::new(0)), }
+        Self {
+            counter: Rc::new(RefCell::new(0)),
+        }
     }
 
     pub fn new_with_id(id: usize) -> Self {
-        Self { counter: Rc::new(RefCell::new(id)), }
+        Self {
+            counter: Rc::new(RefCell::new(id)),
+        }
     }
 
-    pub fn current(&self) -> usize { *self.counter.borrow_mut() }
+    pub fn current(&self) -> usize {
+        *self.counter.borrow_mut()
+    }
 
     pub fn next(&self) -> usize {
         let mut c = self.counter.borrow_mut();
@@ -41,9 +47,9 @@ impl BlockIDGenerator {
 #[derive(Debug, Clone)]
 pub struct Block {
     /// An ID to track this block.
-    id:       usize,
+    id: usize,
     /// How many rows this block spans. A [Block] can only be 1 cell wide.
-    rows:     usize,
+    rows: usize,
     /// Up to two sub [BlockArea] can be specified here by their ID.
     contains: (Option<usize>, Option<usize>),
     /// Whether the sub areas are visible/drawn.
@@ -51,31 +57,31 @@ pub struct Block {
     /// The type of this block. It's just a string set by the [BlockType]
     /// and it should be everything that determines what this block is
     /// going to end up as in the AST.
-    typ:      String,
+    typ: String,
     /// The label of the block.
-    lbl:      String,
+    lbl: String,
     /// The input ports, the index into the [Vec] is the row. The [String]
     /// is the label of the input port.
-    inputs:   Vec<Option<String>>,
+    inputs: Vec<Option<String>>,
     /// The output ports, the index into the [Vec] is the row. The [String]
     /// is the label of the output port.
-    outputs:  Vec<Option<String>>,
+    outputs: Vec<Option<String>>,
     /// The color index of this block.
-    color:    usize,
+    color: usize,
 }
 
 impl Block {
     pub fn clone_with_new_id(&self, new_id: usize) -> Self {
         Self {
-            id:       new_id,
-            rows:     self.rows,
+            id: new_id,
+            rows: self.rows,
             contains: self.contains.clone(),
             expanded: self.expanded,
-            typ:      self.typ.clone(),
-            lbl:      self.lbl.clone(),
-            inputs:   self.inputs.clone(),
-            outputs:  self.outputs.clone(),
-            color:    self.color,
+            typ: self.typ.clone(),
+            lbl: self.lbl.clone(),
+            inputs: self.inputs.clone(),
+            outputs: self.outputs.clone(),
+            color: self.color,
         }
     }
 
@@ -87,16 +93,18 @@ impl Block {
             return;
         }
 
-        let v =
-            if output { &mut self.outputs }
-            else      { &mut self.inputs };
+        let v = if output {
+            &mut self.outputs
+        } else {
+            &mut self.inputs
+        };
 
         if v.len() < self.rows {
             v.resize(self.rows, None);
         }
 
         let idx_from = idx;
-        let idx_to   = (idx + 1) % v.len();
+        let idx_to = (idx + 1) % v.len();
         let elem = v.remove(idx_from);
         v.insert(idx_to, elem);
     }
@@ -155,12 +163,19 @@ impl Block {
 }
 
 impl BlockView for Block {
-    fn rows(&self) -> usize { self.rows }
-    fn contains(&self, idx: usize) -> Option<usize> {
-        if idx == 0 { self.contains.0 }
-        else { self.contains.1 }
+    fn rows(&self) -> usize {
+        self.rows
     }
-    fn expanded(&self) -> bool { true }
+    fn contains(&self, idx: usize) -> Option<usize> {
+        if idx == 0 {
+            self.contains.0
+        } else {
+            self.contains.1
+        }
+    }
+    fn expanded(&self) -> bool {
+        true
+    }
     fn label(&self, buf: &mut [u8]) -> usize {
         use std::io::Write;
         let mut bw = std::io::BufWriter::new(buf);
@@ -184,8 +199,12 @@ impl BlockView for Block {
                     Ok(_) => bw.buffer().len(),
                     _ => 0,
                 }
-            } else { 0 }
-        } else { 0 }
+            } else {
+                0
+            }
+        } else {
+            0
+        }
     }
     fn output_label(&self, idx: usize, buf: &mut [u8]) -> usize {
         use std::io::Write;
@@ -196,10 +215,16 @@ impl BlockView for Block {
                     Ok(_) => bw.buffer().len(),
                     _ => 0,
                 }
-            } else { 0 }
-        } else { 0 }
+            } else {
+                0
+            }
+        } else {
+            0
+        }
     }
-    fn custom_color(&self) -> Option<usize> { Some(self.color) }
+    fn custom_color(&self) -> Option<usize> {
+        Some(self.color)
+    }
 }
 
 /// Represents a connected collection of blocks. Is created by
@@ -218,11 +243,11 @@ pub struct BlockChain {
     /// The area ID this BlockChain was created from.
     area_id: usize,
     /// Stores the positions of the blocks of the chain inside the [BlockArea].
-    blocks:  HashSet<(i64, i64)>,
+    blocks: HashSet<(i64, i64)>,
     /// Stores the positions of blocks that only have output ports.
     sources: HashSet<(i64, i64)>,
     /// Stores the positions of blocks that only have input ports.
-    sinks:   HashSet<(i64, i64)>,
+    sinks: HashSet<(i64, i64)>,
     /// This field stores _loaded_ blocks from the [BlockArea]
     /// into this [BlockChain] for inserting or analyzing them.
     ///
@@ -234,7 +259,7 @@ pub struct BlockChain {
     /// They are stored in ascending order of their `x` coordinate,
     /// and for the same `x` coordinate in
     /// ascending order of their `y` coordinate.
-    load:    Vec<(Box<Block>, i64, i64)>,
+    load: Vec<(Box<Block>, i64, i64)>,
 }
 
 impl BlockChain {
@@ -268,9 +293,8 @@ impl BlockChain {
     }
 
     fn sort_load_pos(&mut self) {
-        self.load.sort_by(|&(_, x0, y0), &(_, x1, y1)| {
-            x0.cmp(&x1).then(y0.cmp(&y1))
-        });
+        self.load
+            .sort_by(|&(_, x0, y0), &(_, x1, y1)| x0.cmp(&x1).then(y0.cmp(&y1)));
     }
 
     pub fn get_connected_inputs_from_load_at_x(&self, x_split: i64) -> Vec<(i64, i64)> {
@@ -288,7 +312,8 @@ impl BlockChain {
         for (block, x, y) in &self.load {
             if *x == (x_split + 1) {
                 block.for_input_ports(|row, _| {
-                    if output_points.iter()
+                    if output_points
+                        .iter()
                         .find(|&&out_y| out_y == (y + (row as i64)))
                         .is_some()
                     {
@@ -301,21 +326,23 @@ impl BlockChain {
         connection_pos
     }
 
-//    pub fn join_load_after_x(&mut self, x_join: i64, y_split: i64) -> bool {
-//        let filler_pos : Vec<(i64, i64)> =
-//            self.get_connected_inputs_from_load_at_x(x_split);
-//        if filler_pos.len() > 1
-//           || (filler_pos.len() == 1 && filler_pos[0] != (x_join, y_split)
-//    }
+    //    pub fn join_load_after_x(&mut self, x_join: i64, y_split: i64) -> bool {
+    //        let filler_pos : Vec<(i64, i64)> =
+    //            self.get_connected_inputs_from_load_at_x(x_split);
+    //        if filler_pos.len() > 1
+    //           || (filler_pos.len() == 1 && filler_pos[0] != (x_join, y_split)
+    //    }
 
     pub fn split_load_after_x(
-        &mut self, x_split: i64, y_split: i64,
-        filler: Option<&BlockType>, id_gen: BlockIDGenerator,
+        &mut self,
+        x_split: i64,
+        y_split: i64,
+        filler: Option<&BlockType>,
+        id_gen: BlockIDGenerator,
     ) {
-        let filler_pos : Vec<(i64, i64)> =
-            self.get_connected_inputs_from_load_at_x(x_split);
+        let filler_pos: Vec<(i64, i64)> = self.get_connected_inputs_from_load_at_x(x_split);
 
-        for (block, x, y) in &mut self.load {
+        for (_block, x, _y) in &mut self.load {
             if *x > x_split {
                 *x += 1;
             }
@@ -323,7 +350,9 @@ impl BlockChain {
 
         if let Some(filler) = filler {
             for (x, y) in filler_pos {
-                if y == y_split { continue; }
+                if y == y_split {
+                    continue;
+                }
                 let filler_block = filler.instanciate_block(None, id_gen.clone());
 
                 self.load.push((filler_block, x, y));
@@ -338,10 +367,8 @@ impl BlockChain {
 
         for b in &self.blocks {
             if let Some((block, xo, yo)) = area.ref_at_origin(b.0, b.1) {
-                self.load.push((
-                    Box::new(block.clone_with_new_id(id_gen.next())),
-                    xo,
-                    yo));
+                self.load
+                    .push((Box::new(block.clone_with_new_id(id_gen.next())), xo, yo));
             }
         }
 
@@ -367,27 +394,27 @@ impl BlockChain {
 
     pub fn try_fit_load_into_space(&mut self, area: &mut BlockArea) -> bool {
         for (xo, yo) in &[
-            ( 0,  0), // where it currently is
-            ( 0, -1),
-            ( 0, -2),
-            ( 0, -3),
-            (-1,  0),
+            (0, 0), // where it currently is
+            (0, -1),
+            (0, -2),
+            (0, -3),
+            (-1, 0),
             (-1, -1),
             (-1, -2),
             (-1, -3),
-            ( 1,  0),
-            ( 1, -1),
-            ( 1, -2),
-            ( 1, -3),
-            ( 0,  1),
-            ( 0,  2),
-            ( 0,  3),
-            (-1,  1),
-            (-1,  2),
-            (-1,  3),
-            ( 1,  1),
-            ( 1,  2),
-            ( 1,  3),
+            (1, 0),
+            (1, -1),
+            (1, -2),
+            (1, -3),
+            (0, 1),
+            (0, 2),
+            (0, 3),
+            (-1, 1),
+            (-1, 2),
+            (-1, 3),
+            (1, 1),
+            (1, 2),
+            (1, 3),
         ] {
             println!("TRY {},{}", *xo, *yo);
             if self.area_has_space_for_load(area, *xo, *yo) {
@@ -401,7 +428,12 @@ impl BlockChain {
         return false;
     }
 
-    pub fn area_has_space_for_load(&mut self, area: &mut BlockArea, xoffs: i64, yoffs: i64) -> bool {
+    pub fn area_has_space_for_load(
+        &mut self,
+        area: &mut BlockArea,
+        xoffs: i64,
+        yoffs: i64,
+    ) -> bool {
         for (block, x, y) in self.load.iter() {
             if !area.check_space_at(*x + xoffs, *y + yoffs, block.rows) {
                 return false;
@@ -411,10 +443,7 @@ impl BlockChain {
         true
     }
 
-    pub fn area_is_subarea_of_loaded(
-        &mut self, area: usize, fun: &mut BlockFun
-    ) -> bool
-    {
+    pub fn area_is_subarea_of_loaded(&mut self, area: usize, fun: &mut BlockFun) -> bool {
         let mut areas = vec![];
 
         for (block, _, _) in self.load.iter() {
@@ -433,21 +462,21 @@ impl BlockChain {
 
 #[derive(Debug, Clone)]
 pub struct BlockArea {
-    blocks:      HashMap<(i64, i64), Box<Block>>,
-    origin_map:  HashMap<(i64, i64), (i64, i64)>,
-    size:        (usize, usize),
+    blocks: HashMap<(i64, i64), Box<Block>>,
+    origin_map: HashMap<(i64, i64), (i64, i64)>,
+    size: (usize, usize),
     auto_shrink: bool,
-    header:      String,
+    header: String,
 }
 
 impl BlockArea {
     fn new(w: usize, h: usize) -> Self {
         Self {
-            blocks:      HashMap::new(),
-            origin_map:  HashMap::new(),
-            size:        (w, h),
+            blocks: HashMap::new(),
+            origin_map: HashMap::new(),
+            size: (w, h),
             auto_shrink: false,
-            header:      "".to_string(),
+            header: "".to_string(),
         }
     }
 
@@ -459,17 +488,19 @@ impl BlockArea {
         self.auto_shrink = shrink;
     }
 
-    pub fn auto_shrink(&self) -> bool { self.auto_shrink }
+    pub fn auto_shrink(&self) -> bool {
+        self.auto_shrink
+    }
 
     pub fn chain_at(&self, x: i64, y: i64) -> Option<Box<BlockChain>> {
-        let (block, xo, yo) = self.ref_at_origin(x, y)?;
+        let (_block, xo, yo) = self.ref_at_origin(x, y)?;
 
-        let mut dq : VecDeque<(i64, i64)> = VecDeque::new();
+        let mut dq: VecDeque<(i64, i64)> = VecDeque::new();
         dq.push_back((xo, yo));
 
-        let mut blocks  : HashSet<(i64, i64)> = HashSet::new();
-        let mut sources : HashSet<(i64, i64)> = HashSet::new();
-        let mut sinks   : HashSet<(i64, i64)> = HashSet::new();
+        let mut blocks: HashSet<(i64, i64)> = HashSet::new();
+        let mut sources: HashSet<(i64, i64)> = HashSet::new();
+        let mut sinks: HashSet<(i64, i64)> = HashSet::new();
 
         let mut check_port_conns = vec![];
 
@@ -489,7 +520,7 @@ impl BlockArea {
 
                 blocks.insert((xo, yo));
 
-                let mut has_input  = false;
+                let mut has_input = false;
                 let mut has_output = false;
 
                 block.for_input_ports(|idx, _| {
@@ -515,10 +546,8 @@ impl BlockArea {
             // a corresponding input or output port at the right
             // row inside the block.
             for (x, y, is_output) in &check_port_conns {
-                if let Some((block, xo, yo, _row)) =
-                    self.find_port_at(*x, *y, *is_output)
-                {
-                     dq.push_back((xo, yo));
+                if let Some((_block, xo, yo, _row)) = self.find_port_at(*x, *y, *is_output) {
+                    dq.push_back((xo, yo));
                 }
             }
         }
@@ -535,7 +564,7 @@ impl BlockArea {
     pub fn find_last_unconnected_output(&self) -> Option<(i64, i64, String)> {
         let mut max_x = 0;
         let mut max_y = 0;
-        let mut port : Option<(i64, i64, String)> = None;
+        let mut port: Option<(i64, i64, String)> = None;
 
         for ((x, y), block) in &self.blocks {
             let (x, y) = (*x, *y);
@@ -549,22 +578,27 @@ impl BlockArea {
                         max_x = x;
 
                         port = Some((
-                            max_x, max_y,
-                            block.outputs
+                            max_x,
+                            max_y,
+                            block
+                                .outputs
                                 .get(row)
                                 .cloned()
                                 .flatten()
-                                .unwrap_or_else(|| "".to_string())
+                                .unwrap_or_else(|| "".to_string()),
                         ));
                     } else if y == max_y && x > max_x {
                         max_x = x;
 
                         port = Some((
-                            max_x, max_y,
-                            block.outputs.get(row)
+                            max_x,
+                            max_y,
+                            block
+                                .outputs
+                                .get(row)
                                 .cloned()
                                 .flatten()
-                                .unwrap_or_else(|| "".to_string())
+                                .unwrap_or_else(|| "".to_string()),
                         ));
                     }
                 }
@@ -588,11 +622,11 @@ impl BlockArea {
         for ((x, y), block) in &self.blocks {
             if block.count_outputs() == 0 {
                 sinks_out.push((*x, *y, None));
-
             } else {
                 block.for_output_ports(|row, _| {
-                    if self.find_port_at(
-                        *x + 1, *y + (row as i64), false).is_none()
+                    if self
+                        .find_port_at(*x + 1, *y + (row as i64), false)
+                        .is_none()
                     {
                         sinks_out.push((*x, *y + (row as i64), Some(row)));
                     }
@@ -600,9 +634,7 @@ impl BlockArea {
             }
         }
 
-        sinks_out.sort_by(|&(x0, y0, _), &(x1, y1, _)| {
-            y1.cmp(&y0).then(x1.cmp(&x0))
-        });
+        sinks_out.sort_by(|&(x0, y0, _), &(x1, y1, _)| y1.cmp(&y0).then(x1.cmp(&x0)));
 
         sinks_out
     }
@@ -629,9 +661,12 @@ impl BlockArea {
         self.blocks.get_mut(&(xo, yo)).map(|b| (b.as_mut(), xo, yo))
     }
 
-    fn find_port_at(&self, x: i64, y: i64, expect_output: bool)
-        -> Option<(&Block, i64, i64, usize)>
-    {
+    fn find_port_at(
+        &self,
+        x: i64,
+        y: i64,
+        expect_output: bool,
+    ) -> Option<(&Block, i64, i64, usize)> {
         let (block, xo, yo) = self.ref_at_origin(x, y)?;
 
         let port_y = (y - yo).max(0) as usize;
@@ -682,7 +717,7 @@ impl BlockArea {
     }
 
     fn get_direct_sub_areas(&self, out: &mut Vec<usize>) {
-        for ((x, y), block) in &self.blocks {
+        for ((_x, _y), block) in &self.blocks {
             if let Some(sub_area) = block.contains.0 {
                 out.push(sub_area);
             }
@@ -695,18 +730,19 @@ impl BlockArea {
 
     /// Calculates only the size of the area in the +x/+y quadrant.
     /// The negative areas are not counted in.
-    fn resolve_size<F: Fn(usize) -> (usize, usize)>(
-        &self, resolve_sub_areas: F
-    ) -> (usize, usize)
-    {
+    fn resolve_size<F: Fn(usize) -> (usize, usize)>(&self, resolve_sub_areas: F) -> (usize, usize) {
         let mut min_w = 1;
         let mut min_h = 1;
 
         for ((ox, oy), _) in &self.origin_map {
             let (ox, oy) = ((*ox).max(0) as usize, (*oy).max(0) as usize);
 
-            if min_w < (ox + 1) { min_w = ox + 1; }
-            if min_h < (oy + 1) { min_h = oy + 1; }
+            if min_w < (ox + 1) {
+                min_w = ox + 1;
+            }
+            if min_h < (oy + 1) {
+                min_h = oy + 1;
+            }
         }
 
         for ((x, y), block) in &self.blocks {
@@ -718,25 +754,40 @@ impl BlockArea {
                 let (sub_w, mut sub_h) = resolve_sub_areas(sub_area);
                 sub_h += prev_h;
                 prev_h += sub_h;
-                if min_w < (x + sub_w + 1) { min_w = x + sub_w + 1; }
-                if min_h < (y + sub_h + 1) { min_h = y + sub_h + 1; }
+                if min_w < (x + sub_w + 1) {
+                    min_w = x + sub_w + 1;
+                }
+                if min_h < (y + sub_h + 1) {
+                    min_h = y + sub_h + 1;
+                }
             }
 
             if let Some(sub_area) = block.contains.1 {
                 let (sub_w, mut sub_h) = resolve_sub_areas(sub_area);
                 sub_h += prev_h;
-                if min_w < (x + sub_w + 1) { min_w = x + sub_w + 1; }
-                if min_h < (y + sub_h + 1) { min_h = y + sub_h + 1; }
+                if min_w < (x + sub_w + 1) {
+                    min_w = x + sub_w + 1;
+                }
+                if min_h < (y + sub_h + 1) {
+                    min_h = y + sub_h + 1;
+                }
             }
         }
 
         if self.auto_shrink {
             (min_w, min_h)
-
         } else {
             (
-                if self.size.0 < min_w { min_w } else { self.size.0 },
-                if self.size.1 < min_h { min_h } else { self.size.1 },
+                if self.size.0 < min_w {
+                    min_w
+                } else {
+                    self.size.0
+                },
+                if self.size.1 < min_h {
+                    min_h
+                } else {
+                    self.size.1
+                },
             )
         }
     }
@@ -774,7 +825,9 @@ pub enum BlockUserInput {
 }
 
 impl Default for BlockUserInput {
-    fn default() -> Self { Self::None }
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 impl BlockUserInput {
@@ -783,48 +836,48 @@ impl BlockUserInput {
     }
 }
 
-
 #[derive(Debug, Clone, Default)]
 pub struct BlockType {
-    pub category:       String,
-    pub name:           String,
-    pub rows:           usize,
-    pub inputs:         Vec<Option<String>>,
-    pub outputs:        Vec<Option<String>>,
-    pub area_count:     usize,
-    pub user_input:     BlockUserInput,
-    pub description:    String,
-    pub color:          usize,
+    pub category: String,
+    pub name: String,
+    pub rows: usize,
+    pub inputs: Vec<Option<String>>,
+    pub outputs: Vec<Option<String>>,
+    pub area_count: usize,
+    pub user_input: BlockUserInput,
+    pub description: String,
+    pub color: usize,
 }
 
 impl BlockType {
     fn touch_contains(&self, block: &mut Block) {
-        block.contains =
-            match self.area_count {
-                0 => (None, None),
-                1 => (Some(1), None),
-                2 => (Some(1), Some(1)),
-                _ => (None, None),
-            };
+        block.contains = match self.area_count {
+            0 => (None, None),
+            1 => (Some(1), None),
+            2 => (Some(1), Some(1)),
+            _ => (None, None),
+        };
     }
 
     pub fn instanciate_block(
-        &self, user_input: Option<String>,
-        id_gen: BlockIDGenerator
-    ) -> Box<Block>
-    {
+        &self,
+        user_input: Option<String>,
+        id_gen: BlockIDGenerator,
+    ) -> Box<Block> {
         let mut block = Box::new(Block {
-            id:       id_gen.next(),
-            rows:     self.rows,
+            id: id_gen.next(),
+            rows: self.rows,
             contains: (None, None),
             expanded: true,
-            typ:      self.name.clone(),
-            lbl:
-                if let Some(inp) = user_input { inp }
-                else { self.name.clone() },
-            inputs:   self.inputs.clone(),
-            outputs:  self.outputs.clone(),
-            color:    self.color,
+            typ: self.name.clone(),
+            lbl: if let Some(inp) = user_input {
+                inp
+            } else {
+                self.name.clone()
+            },
+            inputs: self.inputs.clone(),
+            outputs: self.outputs.clone(),
+            color: self.color,
         });
         self.touch_contains(&mut *block);
         block
@@ -833,14 +886,14 @@ impl BlockType {
 
 #[derive(Debug, Clone)]
 pub struct BlockLanguage {
-    types:          HashMap<String, BlockType>,
-    identifiers:    HashMap<String, String>,
+    types: HashMap<String, BlockType>,
+    identifiers: HashMap<String, String>,
 }
 
 impl BlockLanguage {
     pub fn new() -> Self {
         Self {
-            types:       HashMap::new(),
+            types: HashMap::new(),
             identifiers: HashMap::new(),
         }
     }
@@ -859,8 +912,7 @@ impl BlockLanguage {
     }
 
     pub fn list_identifiers(&self) -> Vec<String> {
-        let mut identifiers : Vec<String> =
-            self.identifiers.keys().cloned().collect();
+        let mut identifiers: Vec<String> = self.identifiers.keys().cloned().collect();
         identifiers.sort();
         identifiers
     }
@@ -874,7 +926,7 @@ impl BlockLanguage {
     }
 }
 
-pub trait BlockASTNode : std::fmt::Debug + Clone {
+pub trait BlockASTNode: std::fmt::Debug + Clone {
     fn from(id: usize, typ: &str, lbl: &str) -> Self;
     fn add_node(&self, in_port: String, out_port: String, node: Self);
     fn add_structural_node(&self, node: Self) {
@@ -893,57 +945,66 @@ pub enum BlockDSPError {
 
 #[derive(Debug, Clone)]
 pub struct BlockFunSnapshot {
-    areas:     Vec<Box<BlockArea>>,
-    cur_id:    usize,
+    areas: Vec<Box<BlockArea>>,
+    cur_id: usize,
 }
 
 #[derive(Debug, Clone)]
 pub struct BlockFun {
-    language:       Rc<RefCell<BlockLanguage>>,
-    areas:          Vec<Box<BlockArea>>,
-    size_work_dq:   VecDeque<usize>,
-    area_work_dq:   VecDeque<usize>,
-    id_gen:         BlockIDGenerator,
+    language: Rc<RefCell<BlockLanguage>>,
+    areas: Vec<Box<BlockArea>>,
+    size_work_dq: VecDeque<usize>,
+    area_work_dq: VecDeque<usize>,
+    id_gen: BlockIDGenerator,
 }
 
 #[derive(Debug)]
 enum GenTreeJob<N: BlockASTNode> {
-    Node   { node: N, out: N },
-    Output { area_id: usize, x: i64, y: i64, in_port: String, out: N },
-    Sink   { area_id: usize, x: i64, y: i64, out: N },
-    Area   { area_id: usize,                 out: N },
+    Node {
+        node: N,
+        out: N,
+    },
+    Output {
+        area_id: usize,
+        x: i64,
+        y: i64,
+        in_port: String,
+        out: N,
+    },
+    Sink {
+        area_id: usize,
+        x: i64,
+        y: i64,
+        out: N,
+    },
+    Area {
+        area_id: usize,
+        out: N,
+    },
 }
 
 impl BlockFun {
     pub fn new(lang: Rc<RefCell<BlockLanguage>>) -> Self {
         Self {
-            language:     lang,
-            areas:        vec![Box::new(BlockArea::new(16, 16))],
+            language: lang,
+            areas: vec![Box::new(BlockArea::new(16, 16))],
             size_work_dq: VecDeque::new(),
             area_work_dq: VecDeque::new(),
-            id_gen:       BlockIDGenerator::new(),
+            id_gen: BlockIDGenerator::new(),
         }
     }
 
-    pub fn block_ref(
-        &self, id: usize, x: i64, y: i64
-    ) -> Option<&Block> {
+    pub fn block_ref(&self, id: usize, x: i64, y: i64) -> Option<&Block> {
         let area = self.areas.get(id)?;
         area.ref_at(x, y)
     }
 
-    pub fn block_ref_mut(
-        &mut self, id: usize, x: i64, y: i64
-    ) -> Option<&mut Block> {
+    pub fn block_ref_mut(&mut self, id: usize, x: i64, y: i64) -> Option<&mut Block> {
         let area = self.areas.get_mut(id)?;
         area.ref_mut_at(x, y)
     }
 
-    pub fn shift_port(
-        &mut self, id: usize, x: i64, y: i64,
-        row: usize,
-        output: bool)
-    {
+    pub fn shift_port(&mut self, id: usize, x: i64, y: i64, row: usize, output: bool) {
         if let Some(block) = self.block_ref_mut(id, x, y) {
             block.shift_port(row, output);
         }
@@ -951,85 +1012,89 @@ impl BlockFun {
 
     pub fn save_snapshot(&self) -> BlockFunSnapshot {
         BlockFunSnapshot {
-            areas:  self.areas.iter().cloned().collect(),
+            areas: self.areas.iter().cloned().collect(),
             cur_id: self.id_gen.current(),
         }
     }
 
     pub fn load_snapshot(&mut self, repr: &BlockFunSnapshot) {
-        self.areas  = repr.areas.iter().cloned().collect();
+        self.areas = repr.areas.iter().cloned().collect();
         self.id_gen = BlockIDGenerator::new_with_id(repr.cur_id);
         self.recalculate_area_sizes();
     }
 
-    pub fn generate_tree<Node: BlockASTNode>(&self, null_typ: &str)
-        -> Result<Node, BlockDSPError>
-    {
+    pub fn generate_tree<Node: BlockASTNode>(&self, null_typ: &str) -> Result<Node, BlockDSPError> {
         // This is a type for filling in unfilled outputs:
         let lang = self.language.borrow();
-        let null_typ =
-            lang.types.get(null_typ)
-                .ok_or(
-                    BlockDSPError::UnknownLanguageType(
-                        null_typ.to_string()))?
-                .name.to_string();
+        let null_typ = lang
+            .types
+            .get(null_typ)
+            .ok_or(BlockDSPError::UnknownLanguageType(null_typ.to_string()))?
+            .name
+            .to_string();
 
         // Next we build the root AST node set:
-        let mut tree_builder : Vec<GenTreeJob<Node>> = vec![];
+        let mut tree_builder: Vec<GenTreeJob<Node>> = vec![];
 
-        let mut main_node = Node::from(0, "<r>", "");
+        let main_node = Node::from(0, "<r>", "");
 
         tree_builder.push(GenTreeJob::<Node>::Area {
-            area_id:    0,
-            out:        main_node.clone()
+            area_id: 0,
+            out: main_node.clone(),
         });
 
         // A HashMap to store those blocks, that have multiple outputs.
         // Their AST nodes need to be shared to multiple parent nodes.
-        let mut multi_outs : HashMap<(usize, i64, i64), Node>
-            = HashMap::new();
+        let mut multi_outs: HashMap<(usize, i64, i64), Node> = HashMap::new();
 
         // We do a depth first search here:
         while let Some(job) = tree_builder.pop() {
             match job {
                 GenTreeJob::<Node>::Area { area_id, out } => {
-                    let area =
-                        self.areas.get(area_id)
-                            .ok_or(BlockDSPError::UnknownArea(area_id))?;
+                    let area = self
+                        .areas
+                        .get(area_id)
+                        .ok_or(BlockDSPError::UnknownArea(area_id))?;
 
                     let sinks = area.collect_sinks();
 
-                    let mut area_node = Node::from(0, "<a>", "");
+                    let area_node = Node::from(0, "<a>", "");
                     out.add_structural_node(area_node.clone());
 
                     for (x, y, uncon_out_row) in sinks {
-                        if let Some(row) = uncon_out_row {
-                            let mut result_node = Node::from(0, "<res>", "");
+                        if let Some(_row) = uncon_out_row {
+                            let result_node = Node::from(0, "<res>", "");
 
                             tree_builder.push(GenTreeJob::<Node>::Output {
-                                area_id, x, y,
+                                area_id,
+                                x,
+                                y,
                                 in_port: "".to_string(),
                                 out: result_node.clone(),
                             });
 
                             tree_builder.push(GenTreeJob::<Node>::Node {
                                 node: result_node,
-                                out:  area_node.clone(),
+                                out: area_node.clone(),
                             });
                         } else {
                             tree_builder.push(GenTreeJob::<Node>::Sink {
-                                area_id, x, y, out: area_node.clone(),
+                                area_id,
+                                x,
+                                y,
+                                out: area_node.clone(),
                             });
                         }
                     }
-                },
+                }
                 GenTreeJob::<Node>::Node { node, out } => {
                     out.add_structural_node(node);
-                },
+                }
                 GenTreeJob::<Node>::Sink { area_id, x, y, out } => {
-                    let area =
-                        self.areas.get(area_id)
-                            .ok_or(BlockDSPError::UnknownArea(area_id))?;
+                    let area = self
+                        .areas
+                        .get(area_id)
+                        .ok_or(BlockDSPError::UnknownArea(area_id))?;
 
                     if let Some((block, xo, yo)) = area.ref_at_origin(x, y) {
                         let (node, needs_init) =
@@ -1046,34 +1111,41 @@ impl BlockFun {
 
                             if let Some(cont_area_id) = block.contains.1 {
                                 tree_builder.push(GenTreeJob::<Node>::Area {
-                                    area_id:    cont_area_id,
-                                    out:        node.clone()
+                                    area_id: cont_area_id,
+                                    out: node.clone(),
                                 });
                             }
 
                             if let Some(cont_area_id) = block.contains.0 {
                                 tree_builder.push(GenTreeJob::<Node>::Area {
-                                    area_id:    cont_area_id,
-                                    out:        node.clone()
+                                    area_id: cont_area_id,
+                                    out: node.clone(),
                                 });
                             }
 
                             block.for_input_ports_reverse(|row, port_name| {
                                 tree_builder.push(GenTreeJob::<Node>::Output {
                                     area_id,
-                                    x:       xo - 1,
-                                    y:       yo + (row as i64),
+                                    x: xo - 1,
+                                    y: yo + (row as i64),
                                     in_port: port_name.to_string(),
-                                    out:     node.clone(),
+                                    out: node.clone(),
                                 });
                             });
                         }
                     }
-                },
-                GenTreeJob::<Node>::Output { area_id, x, y, in_port, out } => {
-                    let area =
-                        self.areas.get(area_id)
-                            .ok_or(BlockDSPError::UnknownArea(area_id))?;
+                }
+                GenTreeJob::<Node>::Output {
+                    area_id,
+                    x,
+                    y,
+                    in_port,
+                    out,
+                } => {
+                    let area = self
+                        .areas
+                        .get(area_id)
+                        .ok_or(BlockDSPError::UnknownArea(area_id))?;
 
                     if let Some((block, xo, yo)) = area.ref_at_origin(x, y) {
                         let row = y - yo;
@@ -1085,16 +1157,9 @@ impl BlockFun {
                                 (Node::from(block.id, &block.typ, &block.lbl), true)
                             };
 
-                        if let Some(out_name) =
-                            block.outputs
-                                .get(row as usize)
-                                .cloned()
-                                .flatten()
-                        {
+                        if let Some(out_name) = block.outputs.get(row as usize).cloned().flatten() {
                             out.add_node(in_port, out_name, node.clone());
-                        }
-                        else
-                        {
+                        } else {
                             let node = Node::from(0, &null_typ, "");
                             out.add_node(in_port, "".to_string(), node.clone());
                         }
@@ -1104,25 +1169,25 @@ impl BlockFun {
 
                             if let Some(cont_area_id) = block.contains.1 {
                                 tree_builder.push(GenTreeJob::<Node>::Area {
-                                    area_id:    cont_area_id,
-                                    out:        node.clone()
+                                    area_id: cont_area_id,
+                                    out: node.clone(),
                                 });
                             }
 
                             if let Some(cont_area_id) = block.contains.0 {
                                 tree_builder.push(GenTreeJob::<Node>::Area {
-                                    area_id:    cont_area_id,
-                                    out:        node.clone()
+                                    area_id: cont_area_id,
+                                    out: node.clone(),
                                 });
                             }
 
                             block.for_input_ports_reverse(|row, port_name| {
                                 tree_builder.push(GenTreeJob::<Node>::Output {
                                     area_id,
-                                    x:       xo - 1,
-                                    y:       yo + (row as i64),
+                                    x: xo - 1,
+                                    y: yo + (row as i64),
                                     in_port: port_name.to_string(),
-                                    out:     node.clone(),
+                                    out: node.clone(),
                                 });
                             });
                         }
@@ -1130,7 +1195,7 @@ impl BlockFun {
                         let node = Node::from(0, &null_typ, "");
                         out.add_node(in_port, "".to_string(), node.clone());
                     }
-                },
+                }
             }
         }
 
@@ -1138,8 +1203,8 @@ impl BlockFun {
     }
 
     pub fn recalculate_area_sizes(&mut self) {
-        let mut parents = vec![0;      self.areas.len()];
-        let mut sizes   = vec![(0, 0); self.areas.len()];
+        let mut parents = vec![0; self.areas.len()];
+        let mut sizes = vec![(0, 0); self.areas.len()];
 
         // First we dive downwards, to record all the parents
         // and get the sizes of the (leafs).
@@ -1147,8 +1212,8 @@ impl BlockFun {
         self.area_work_dq.clear();
         self.size_work_dq.clear();
 
-        let mut parents_work_list = &mut self.area_work_dq;
-        let mut size_work_list    = &mut self.size_work_dq;
+        let parents_work_list = &mut self.area_work_dq;
+        let size_work_list = &mut self.size_work_dq;
 
         // Push the root area:
         parents_work_list.push_back(0);
@@ -1167,7 +1232,6 @@ impl BlockFun {
 
             if cur_sub.len() == 0 {
                 size_work_list.push_front(area_idx);
-
             } else {
                 for sub_idx in &cur_sub {
                     // XXX: Record the parent:
@@ -1202,18 +1266,14 @@ impl BlockFun {
         }
     }
 
-    pub fn area_is_subarea_of(
-        &mut self, area_id: usize, a_id: usize, x: i64, y: i64
-    ) -> bool
-    {
+    pub fn area_is_subarea_of(&mut self, area_id: usize, a_id: usize, x: i64, y: i64) -> bool {
         let mut areas = vec![];
 
-        let block =
-            if let Some(block) = self.block_ref(a_id, x, y) {
-                block.clone()
-            } else {
-                return false;
-            };
+        let block = if let Some(block) = self.block_ref(a_id, x, y) {
+            block.clone()
+        } else {
+            return false;
+        };
 
         self.all_sub_areas_of(&block, &mut areas);
 
@@ -1226,12 +1286,10 @@ impl BlockFun {
         return false;
     }
 
-    pub fn all_sub_areas_of(
-        &mut self, block: &Block, areas: &mut Vec<usize>
-    ) {
+    pub fn all_sub_areas_of(&mut self, block: &Block, areas: &mut Vec<usize>) {
         let contains = block.contains.clone();
 
-        let mut area_work_list = &mut self.area_work_dq;
+        let area_work_list = &mut self.area_work_dq;
         area_work_list.clear();
 
         if let Some(area_id) = contains.0 {
@@ -1259,9 +1317,13 @@ impl BlockFun {
     }
 
     pub fn retrieve_block_chain_at(
-        &mut self, id: usize, x: i64, y: i64, remove_blocks: bool
+        &mut self,
+        id: usize,
+        x: i64,
+        y: i64,
+        remove_blocks: bool,
     ) -> Option<Box<BlockChain>> {
-        let area      = self.areas.get_mut(id)?;
+        let area = self.areas.get_mut(id)?;
         let mut chain = area.chain_at(x, y)?;
 
         if remove_blocks {
@@ -1275,28 +1337,29 @@ impl BlockFun {
 
     pub fn clone_block_from_to(
         &mut self,
-        id: usize, x: i64, y: i64,
-        id2: usize, x2: i64, mut y2: i64
-    ) -> Result<(), BlockDSPError>
-    {
+        id: usize,
+        x: i64,
+        y: i64,
+        id2: usize,
+        x2: i64,
+        mut y2: i64,
+    ) -> Result<(), BlockDSPError> {
         let lang = self.language.clone();
 
-        let (mut block, xo, yo) =
-            if let Some(area) = self.areas.get_mut(id) {
-                let (block, xo, yo) =
-                    area.ref_mut_at_origin(x, y)
-                        .ok_or(BlockDSPError::NoBlockAt(id, x, y))?;
+        let (mut block, _xo, yo) = if let Some(area) = self.areas.get_mut(id) {
+            let (block, xo, yo) = area
+                .ref_mut_at_origin(x, y)
+                .ok_or(BlockDSPError::NoBlockAt(id, x, y))?;
 
-                let mut new_block =
-                    Box::new(block.clone_with_new_id(self.id_gen.next()));
-                if let Some(typ) = lang.borrow().types.get(&new_block.typ) {
-                    typ.touch_contains(new_block.as_mut());
-                }
+            let mut new_block = Box::new(block.clone_with_new_id(self.id_gen.next()));
+            if let Some(typ) = lang.borrow().types.get(&new_block.typ) {
+                typ.touch_contains(new_block.as_mut());
+            }
 
-                (new_block, xo, yo)
-            } else {
-                return Err(BlockDSPError::UnknownArea(id));
-            };
+            (new_block, xo, yo)
+        } else {
+            return Err(BlockDSPError::UnknownArea(id));
+        };
 
         self.create_areas_for_block(block.as_mut());
 
@@ -1307,10 +1370,10 @@ impl BlockFun {
             y2 = (y2 - offs).max(0);
         }
 
-        let area2 =
-            self.areas
-                .get_mut(id2)
-                .ok_or(BlockDSPError::UnknownArea(id2))?;
+        let area2 = self
+            .areas
+            .get_mut(id2)
+            .ok_or(BlockDSPError::UnknownArea(id2))?;
         let rows = block.rows;
 
         if area2.check_space_at(x2, y2, block.rows) {
@@ -1323,31 +1386,33 @@ impl BlockFun {
 
     pub fn split_block_chain_after(
         &mut self,
-        id: usize, x: i64, y: i64, filler_type: Option<&str>
-    ) -> Result<(), BlockDSPError>
-    {
-        let mut area_clone =
-            self.areas
-                .get(id)
-                .ok_or(BlockDSPError::UnknownArea(id))?
-                .clone();
+        id: usize,
+        x: i64,
+        y: i64,
+        filler_type: Option<&str>,
+    ) -> Result<(), BlockDSPError> {
+        let mut area_clone = self
+            .areas
+            .get(id)
+            .ok_or(BlockDSPError::UnknownArea(id))?
+            .clone();
 
-        let mut chain =
-            area_clone.chain_at(x, y)
-                .ok_or(BlockDSPError::NoBlockAt(id, x, y))?;
+        let mut chain = area_clone
+            .chain_at(x, y)
+            .ok_or(BlockDSPError::NoBlockAt(id, x, y))?;
 
         chain.remove_load(area_clone.as_mut());
 
         let lang = self.language.borrow();
-        let typ : Option<&BlockType> =
-            if let Some(filler_type) = filler_type {
-                Some(lang.types.get(filler_type)
-                    .ok_or(
-                        BlockDSPError::UnknownLanguageType(
-                            filler_type.to_string()))?)
-            } else {
-                None
-            };
+        let typ: Option<&BlockType> = if let Some(filler_type) = filler_type {
+            Some(
+                lang.types
+                    .get(filler_type)
+                    .ok_or(BlockDSPError::UnknownLanguageType(filler_type.to_string()))?,
+            )
+        } else {
+            None
+        };
 
         chain.split_load_after_x(x, y, typ, self.id_gen.clone());
 
@@ -1364,19 +1429,22 @@ impl BlockFun {
 
     pub fn move_block_chain_from_to(
         &mut self,
-        id: usize, x: i64, y: i64,
-        id2: usize, x2: i64, mut y2: i64
-    ) -> Result<(), BlockDSPError>
-    {
-        let mut area_clone =
-            self.areas
-                .get(id)
-                .ok_or(BlockDSPError::UnknownArea(id))?
-                .clone();
+        id: usize,
+        x: i64,
+        y: i64,
+        id2: usize,
+        x2: i64,
+        y2: i64,
+    ) -> Result<(), BlockDSPError> {
+        let mut area_clone = self
+            .areas
+            .get(id)
+            .ok_or(BlockDSPError::UnknownArea(id))?
+            .clone();
 
-        let mut chain =
-            area_clone.chain_at(x, y)
-                .ok_or(BlockDSPError::NoBlockAt(id, x, y))?;
+        let mut chain = area_clone
+            .chain_at(x, y)
+            .ok_or(BlockDSPError::NoBlockAt(id, x, y))?;
 
         chain.remove_load(area_clone.as_mut());
 
@@ -1391,8 +1459,8 @@ impl BlockFun {
 
             chain.place_load(&mut area_clone);
             self.areas[id] = area_clone;
-
-        } else { // id2 != id
+        } else {
+            // id2 != id
             if chain.area_is_subarea_of_loaded(id2, self) {
                 return Err(BlockDSPError::CircularAction(id, id2));
             }
@@ -1405,15 +1473,13 @@ impl BlockFun {
 
             // XXX: .max(0) prevents us from moving the
             //      chain outside the subarea accendentally!
-            chain.move_by_offs(
-                (grab_x_offs + x2).max(0),
-                (grab_y_offs + y2).max(0));
+            chain.move_by_offs((grab_x_offs + x2).max(0), (grab_y_offs + y2).max(0));
 
-            let mut area2_clone =
-                self.areas
-                    .get(id2)
-                    .ok_or(BlockDSPError::UnknownArea(id))?
-                    .clone();
+            let mut area2_clone = self
+                .areas
+                .get(id2)
+                .ok_or(BlockDSPError::UnknownArea(id))?
+                .clone();
 
             if !chain.try_fit_load_into_space(&mut area2_clone) {
                 return Err(BlockDSPError::NoSpaceAvailable(id, x2, y2, 1));
@@ -1421,39 +1487,38 @@ impl BlockFun {
 
             chain.place_load(&mut area2_clone);
 
-            self.areas[id]  = area_clone;
+            self.areas[id] = area_clone;
             self.areas[id2] = area2_clone;
         }
 
-
-//        let mut chain =
-//            self.retrieve_block_chain_at(id, x, y, true)
-//                .ok_or(BlockDSPError::NoBlockAt(id, x, y))?;
-//
-//        chain.normalize_load_pos();
+        //        let mut chain =
+        //            self.retrieve_block_chain_at(id, x, y, true)
+        //                .ok_or(BlockDSPError::NoBlockAt(id, x, y))?;
+        //
+        //        chain.normalize_load_pos();
 
         Ok(())
     }
 
     pub fn move_block_from_to(
         &mut self,
-        id: usize, x: i64, y: i64,
-        id2: usize, x2: i64, mut y2: i64
-    ) -> Result<(), BlockDSPError>
-    {
+        id: usize,
+        x: i64,
+        y: i64,
+        id2: usize,
+        x2: i64,
+        mut y2: i64,
+    ) -> Result<(), BlockDSPError> {
         if self.area_is_subarea_of(id2, id, x, y) {
             return Err(BlockDSPError::CircularAction(id, id2));
         }
 
-        let (block, xo, yo) =
-            if let Some(area) = self.areas.get_mut(id) {
-                area.remove_at(x, y)
-                    .ok_or(BlockDSPError::NoBlockAt(id, x, y))?
-            } else {
-                return Err(BlockDSPError::UnknownArea(id));
-            };
-
-        let mut res = Ok(());
+        let (block, xo, yo) = if let Some(area) = self.areas.get_mut(id) {
+            area.remove_at(x, y)
+                .ok_or(BlockDSPError::NoBlockAt(id, x, y))?
+        } else {
+            return Err(BlockDSPError::UnknownArea(id));
+        };
 
         // check if the user grabbed at a different row than the top row:
         if y > yo {
@@ -1462,30 +1527,24 @@ impl BlockFun {
             y2 = (y2 - offs).max(0);
         }
 
-        let area2 =
-            self.areas.get_mut(id2)
-                .ok_or(BlockDSPError::UnknownArea(id2))?;
+        let area2 = self
+            .areas
+            .get_mut(id2)
+            .ok_or(BlockDSPError::UnknownArea(id2))?;
         let rows = block.rows;
 
         if area2.check_space_at(x2, y2, block.rows) {
             area2.set_block_at(x2, y2, block);
-            return Ok(());
+            Ok(())
         } else {
-            res = Err(BlockDSPError::NoSpaceAvailable(id2, x2, y2, rows));
-        }
-
-        if let Err(e) = res {
             if let Some(area) = self.areas.get_mut(id) {
                 area.set_block_at(xo, yo, block);
             }
-            Err(e)
-        } else {
-            Ok(())
+            Err(BlockDSPError::NoSpaceAvailable(id2, x2, y2, rows))
         }
     }
 
     fn create_areas_for_block(&mut self, block: &mut Block) {
-
         if let Some(area_id) = &mut block.contains.0 {
             let mut area = Box::new(BlockArea::new(1, 1));
             area.set_auto_shrink(true);
@@ -1502,29 +1561,30 @@ impl BlockFun {
     }
 
     pub fn instanciate_at(
-        &mut self, id: usize, x: i64, y: i64,
-        typ: &str, user_input: Option<String>
-    ) -> Result<(), BlockDSPError>
-    {
+        &mut self,
+        id: usize,
+        x: i64,
+        y: i64,
+        typ: &str,
+        user_input: Option<String>,
+    ) -> Result<(), BlockDSPError> {
         let mut block = {
             let lang = self.language.borrow();
 
             if let Some(area) = self.areas.get_mut(id) {
                 if let Some(typ) = lang.types.get(typ) {
                     if !area.check_space_at(x, y, typ.rows) {
-                        return Err(
-                            BlockDSPError::NoSpaceAvailable(id, x, y, typ.rows));
+                        return Err(BlockDSPError::NoSpaceAvailable(id, x, y, typ.rows));
                     }
                 }
             } else {
                 return Err(BlockDSPError::UnknownArea(id));
             }
 
-            let typ =
-                lang.types.get(typ)
-                    .ok_or(
-                        BlockDSPError::UnknownLanguageType(
-                            typ.to_string()))?;
+            let typ = lang
+                .types
+                .get(typ)
+                .ok_or(BlockDSPError::UnknownLanguageType(typ.to_string()))?;
 
             typ.instanciate_block(user_input, self.id_gen.clone())
         };
@@ -1538,13 +1598,11 @@ impl BlockFun {
         Ok(())
     }
 
-    pub fn remove_at(
-        &mut self, id: usize, x: i64, y: i64
-    ) -> Result<(), BlockDSPError>
-    {
-        let area =
-            self.areas.get_mut(id)
-                .ok_or(BlockDSPError::UnknownArea(id))?;
+    pub fn remove_at(&mut self, id: usize, x: i64, y: i64) -> Result<(), BlockDSPError> {
+        let area = self
+            .areas
+            .get_mut(id)
+            .ok_or(BlockDSPError::UnknownArea(id))?;
         area.remove_at(x, y)
             .ok_or(BlockDSPError::NoBlockAt(id, x, y))?;
         Ok(())
@@ -1555,7 +1613,7 @@ impl BlockFun {
     }
 
     pub fn block_at(&self, id: usize, x: i64, y: i64) -> Option<&dyn BlockView> {
-        let area  = self.areas.get(id)?;
+        let area = self.areas.get(id)?;
         Some(area.blocks.get(&(x, y))?.as_ref())
     }
 
@@ -1580,10 +1638,7 @@ impl BlockCodeView for BlockFun {
         self.block_at(id, x, y)
     }
 
-    fn origin_at(&self, id: usize, x: i64, y: i64)
-        -> Option<(i64, i64)>
-    {
+    fn origin_at(&self, id: usize, x: i64, y: i64) -> Option<(i64, i64)> {
         self.origin_at(id, x, y)
     }
 }
-

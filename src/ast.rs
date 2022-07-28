@@ -101,7 +101,7 @@ impl ASTFun {
     }
 }
 
-fn walk_ast<F: FnMut(&mut ASTNode)>(mut node: &mut ASTNode, f: &mut F) {
+fn walk_ast<F: FnMut(&mut ASTNode)>(node: &mut ASTNode, f: &mut F) {
     f(node);
     match node {
         ASTNode::Lit(_) | ASTNode::Var(_) => {}
@@ -156,13 +156,13 @@ impl ASTNode {
 
     pub fn typ_str(&self) -> &str {
         match self {
-            ASTNode::Lit(v) => "lit",
-            ASTNode::Var(v) => "var",
-            ASTNode::Assign(v, _) => "assign",
-            ASTNode::BinOp(op, _, _) => "binop",
+            ASTNode::Lit(_v) => "lit",
+            ASTNode::Var(_v) => "var",
+            ASTNode::Assign(_v, _) => "assign",
+            ASTNode::BinOp(_op, _, _) => "binop",
             ASTNode::If(_, _, _) => "if",
-            ASTNode::Call(fun, _, _) => "call",
-            ASTNode::Stmts(stmts) => "stmts",
+            ASTNode::Call(_fun, _, _) => "call",
+            ASTNode::Stmts(_stmts) => "stmts",
         }
     }
 

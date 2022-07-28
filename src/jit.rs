@@ -15,7 +15,6 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::mem;
 use std::rc::Rc;
-use std::slice;
 
 /// The basic JIT class.
 pub struct JIT {
@@ -28,8 +27,8 @@ pub struct JIT {
     /// context per thread, though this isn't in the simple demo here.
     ctx: codegen::Context,
 
-    /// The data context, which is to data objects what `ctx` is to functions.
-    data_ctx: DataContext,
+    // /// The data context, which is to data objects what `ctx` is to functions.
+    // data_ctx: DataContext,
 
     /// The module, with the jit backend, which manages the JIT'd
     /// functions.
@@ -62,14 +61,14 @@ impl JIT {
         Self {
             builder_context: FunctionBuilderContext::new(),
             ctx: module.make_context(),
-            data_ctx: DataContext::new(),
+            // data_ctx: DataContext::new(),
             module: Some(module),
             dsp_lib,
         }
     }
 
     /// Compile a string in the toy language into machine code.
-    pub fn compile(&mut self, prog: ASTFun) -> Result<*const u8, String> {
+    pub fn compile(&mut self, prog: ASTFun) -> Result<*const u8, JITCompileError> {
         let module = self.module.as_mut().expect("Module still loaded");
         let ptr_type = module.target_config().pointer_type();
 
@@ -85,7 +84,7 @@ impl JIT {
 
         let id = module
             .declare_function("dsp", Linkage::Export, &self.ctx.func.signature)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| JITCompileError::DeclareTopFunError(e.to_string()))?;
 
         self.ctx.func.name = ExternalName::user(0, id.as_u32());
 
@@ -95,7 +94,7 @@ impl JIT {
         let module = self.module.as_mut().expect("Module still loaded");
         module
             .define_function(id, &mut self.ctx)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| JITCompileError::DefineTopFunError(e.to_string()))?;
 
         module.clear_context(&mut self.ctx);
         module.finalize_definitions();
@@ -126,17 +125,17 @@ impl JIT {
     //    }
 
     // Translate from toy-language AST nodes into Cranelift IR.
-    fn translate(&mut self, fun: ASTFun) -> Result<(), String> {
-        let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
+    fn translate(&mut self, fun: ASTFun) -> Result<(), JITCompileError> {
+        let builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
 
         let module = self.module.as_mut().expect("Module still loaded");
         let lib = self.dsp_lib.clone();
         let lib = lib.borrow();
         let mut trans = DSPFunctionTranslator::new(&*lib, builder, module);
         trans.register_functions();
-        let ret = trans.translate(fun);
+        let ret = trans.translate(fun)?;
         //d// println!("{}", trans.builder.func.display());
-        ret
+        Ok(ret)
     }
 
     //    pub fn translate_ast_node(&mut self, builder: FunctionBuilder<'a>,
@@ -176,7 +175,7 @@ pub enum DSPNodeSigBit {
 
 /// A trait that handles allocation and deallocation of the
 /// state that belongs to a DSPNodeType.
-trait DSPNodeType {
+pub trait DSPNodeType {
     /// The name of this DSP node, by this name it can be called from
     /// the [ASTFun].
     fn name(&self) -> &str;
@@ -185,7 +184,7 @@ trait DSPNodeType {
     fn function_ptr(&self) -> *const u8;
 
     /// Should return the signature type for input parameter `i`.
-    fn signature(&self, i: usize) -> Option<DSPNodeSigBit> {
+    fn signature(&self, _i: usize) -> Option<DSPNodeSigBit> {
         None
     }
 
@@ -200,7 +199,7 @@ trait DSPNodeType {
     }
 
     /// Deallocates the private state of this [DSPNodeType].
-    fn deallocate_state(&self, ptr: *mut u8) {}
+    fn deallocate_state(&self, _ptr: *mut u8) {}
 
     /// Returns true if this DSPNodeType has some private state that should be passed as
     /// argument (allocated using [DSPNodeType::allocate_state].
@@ -398,6 +397,16 @@ impl DSPFunction {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum JITCompileError {
+    BadDefinedParams,
+    UnknownFunction(String),
+    UndefinedVariable(String),
+    DeclareTopFunError(String),
+    DefineTopFunError(String),
+    UndefinedDSPNode(String),
+}
+
 impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
     pub fn new(
         dsp_lib: &'b DSPNodeTypeLibrary,
@@ -442,11 +451,11 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
                 sig.returns.push(AbiParam::new(F64));
             }
 
-            let func_id =
-                self.module
-                    .declare_function(typ.name(), cranelift_module::Linkage::Import, &sig)
-                    .map_err(|e| e.to_string())
-                    .unwrap();
+            let func_id = self
+                .module
+                .declare_function(typ.name(), cranelift_module::Linkage::Import, &sig)
+                .map_err(|e| e.to_string())
+                .unwrap();
 
             functions.insert(typ.name().to_string(), (typ.clone(), func_id));
         });
@@ -490,7 +499,7 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
         var
     }
 
-    fn translate(&mut self, fun: ASTFun) -> Result<(), String> {
+    fn translate(&mut self, fun: ASTFun) -> Result<(), JITCompileError> {
         let ptr_type = self.module.target_config().pointer_type();
         self.ptr_w = ptr_type.bytes();
 
@@ -506,27 +515,30 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
         for param_idx in 0..fun.param_count() {
             let val = self.builder.block_params(entry_block)[param_idx];
 
-            let param_name = fun
-                .param_name(param_idx)
-                .expect("Parameter name accessible here");
-            let var = if fun.param_is_ref(param_idx) {
-                self.declare_variable(ptr_type, param_name)
-            } else {
-                self.declare_variable(F64, param_name)
-            };
+            match fun.param_name(param_idx) {
+                Some(param_name) => {
+                    let var = if fun.param_is_ref(param_idx) {
+                        self.declare_variable(ptr_type, param_name)
+                    } else {
+                        self.declare_variable(F64, param_name)
+                    };
 
-            self.builder.def_var(var, val);
+                    self.builder.def_var(var, val);
+                }
+                None => {
+                    return Err(JITCompileError::BadDefinedParams);
+                }
+            }
         }
 
         // declare and define local variables:
-        for (i, local_name) in fun.local_variables().iter().enumerate() {
-            println!("DECLARE LOCAL: {}", local_name);
+        for local_name in fun.local_variables().iter() {
             let zero = self.builder.ins().f64const(0.0);
             let var = self.declare_variable(F64, local_name);
             self.builder.def_var(var, zero);
         }
 
-        let v = self.compile(fun.ast_ref());
+        let v = self.compile(fun.ast_ref())?;
 
         self.builder.ins().return_(&[v]);
         self.builder.finalize();
@@ -539,24 +551,29 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
         self.builder.ins().fcvt_from_uint(F64, bint)
     }
 
-    fn compile(&mut self, ast: &Box<ASTNode>) -> Value {
-        let ptr_type = self.module.target_config().pointer_type();
-
+    fn compile(&mut self, ast: &Box<ASTNode>) -> Result<Value, JITCompileError> {
         match ast.as_ref() {
-            ASTNode::Lit(v) => self.builder.ins().f64const(*v),
+            ASTNode::Lit(v) => Ok(self.builder.ins().f64const(*v)),
             ASTNode::Var(name) => {
-                let variable = self.variables.get(name).unwrap();
+                let variable = self
+                    .variables
+                    .get(name)
+                    .ok_or_else(|| JITCompileError::UndefinedVariable(name.to_string()))?;
 
                 if name.chars().next() == Some('&') {
                     let ptr = self.builder.use_var(*variable);
-                    self.builder.ins().load(F64, MemFlags::new(), ptr, 0)
+                    Ok(self.builder.ins().load(F64, MemFlags::new(), ptr, 0))
                 } else {
-                    self.builder.use_var(*variable)
+                    Ok(self.builder.use_var(*variable))
                 }
             }
             ASTNode::Assign(name, ast) => {
-                let value = self.compile(ast);
-                let variable = self.variables.get(name).unwrap();
+                let value = self.compile(ast)?;
+
+                let variable = self
+                    .variables
+                    .get(name)
+                    .ok_or_else(|| JITCompileError::UndefinedVariable(name.to_string()))?;
 
                 if name.chars().next() == Some('&') {
                     let ptr = self.builder.use_var(*variable);
@@ -565,16 +582,15 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
                     self.builder.def_var(*variable, value);
                 }
 
-                value
+                Ok(value)
             }
             ASTNode::BinOp(op, a, b) => {
-                let value_a = self.compile(a);
-                let value_b = self.compile(b);
-                match op {
+                let value_a = self.compile(a)?;
+                let value_b = self.compile(b)?;
+                let value = match op {
                     ASTBinOp::Add => self.builder.ins().fadd(value_a, value_b),
                     ASTBinOp::Sub => self.builder.ins().fsub(value_a, value_b),
                     ASTBinOp::Mul => self.builder.ins().fmul(value_a, value_b),
-                    ASTBinOp::Div => self.builder.ins().fdiv(value_a, value_b),
                     ASTBinOp::Div => self.builder.ins().fdiv(value_a, value_b),
                     ASTBinOp::Eq => {
                         let cmp_res = self.builder.ins().fcmp(FloatCC::Equal, value_a, value_b);
@@ -611,12 +627,17 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
                         let cmp_res = self.builder.ins().fcmp(FloatCC::LessThan, value_a, value_b);
                         self.ins_b_to_f64(cmp_res)
                     }
-                }
+                };
+
+                Ok(value)
             }
             ASTNode::Call(name, fstate_index, arg) => {
-                let value_arg = self.compile(arg);
+                let value_arg = self.compile(arg)?;
 
-                let func = self.functions.get(name).expect("Funciton Name exists");
+                let func = self
+                    .functions
+                    .get(name)
+                    .ok_or_else(|| JITCompileError::UndefinedDSPNode(name.to_string()))?;
                 let func_id = func.1;
 
                 if name == "test" {
@@ -643,55 +664,58 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
                         .builder
                         .ins()
                         .call(local_callee, &[value_arg, ptr, func_state]);
-                    self.builder.inst_results(call)[0]
+                    Ok(self.builder.inst_results(call)[0])
                 } else {
                     let local_callee = self
                         .module
                         .declare_func_in_func(func_id, &mut self.builder.func);
                     let call = self.builder.ins().call(local_callee, &[value_arg]);
-                    self.builder.inst_results(call)[0]
+                    Ok(self.builder.inst_results(call)[0])
                 }
             }
             ASTNode::If(cond, then, els) => {
                 let condition_value = if let ASTNode::BinOp(op, a, b) = cond.as_ref() {
-                    match op {
+                    let val = match op {
                         ASTBinOp::Eq => {
-                            let a = self.compile(a);
-                            let b = self.compile(b);
+                            let a = self.compile(a)?;
+                            let b = self.compile(b)?;
                             self.builder.ins().fcmp(FloatCC::Equal, a, b)
                         }
                         ASTBinOp::Ne => {
-                            let a = self.compile(a);
-                            let b = self.compile(b);
+                            let a = self.compile(a)?;
+                            let b = self.compile(b)?;
                             let eq = self.builder.ins().fcmp(FloatCC::Equal, a, b);
                             self.builder.ins().bnot(eq)
                         }
                         ASTBinOp::Gt => {
-                            let a = self.compile(a);
-                            let b = self.compile(b);
+                            let a = self.compile(a)?;
+                            let b = self.compile(b)?;
                             self.builder.ins().fcmp(FloatCC::GreaterThan, a, b)
                         }
                         ASTBinOp::Lt => {
-                            let a = self.compile(a);
-                            let b = self.compile(b);
+                            let a = self.compile(a)?;
+                            let b = self.compile(b)?;
                             self.builder.ins().fcmp(FloatCC::LessThan, a, b)
                         }
                         ASTBinOp::Ge => {
-                            let a = self.compile(a);
-                            let b = self.compile(b);
+                            let a = self.compile(a)?;
+                            let b = self.compile(b)?;
                             self.builder.ins().fcmp(FloatCC::GreaterThanOrEqual, a, b)
                         }
                         ASTBinOp::Le => {
-                            let a = self.compile(a);
-                            let b = self.compile(b);
+                            let a = self.compile(a)?;
+                            let b = self.compile(b)?;
                             self.builder.ins().fcmp(FloatCC::LessThanOrEqual, a, b)
                         }
-                        _ => self.compile(cond),
-                    }
+                        _ => self.compile(cond)?,
+                    };
+
+                    val
                 } else {
-                    let res = self.compile(cond);
+                    let res = self.compile(cond)?;
                     let cmpv = self.builder.ins().f64const(0.5);
-                    self.builder
+                    self
+                        .builder
                         .ins()
                         .fcmp(FloatCC::GreaterThanOrEqual, res, cmpv)
                 };
@@ -714,7 +738,7 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
 
                 self.builder.switch_to_block(then_block);
                 self.builder.seal_block(then_block);
-                let then_return = self.compile(then);
+                let then_return = self.compile(then)?;
 
                 // Jump to the merge block, passing it the block return value.
                 self.builder.ins().jump(merge_block, &[then_return]);
@@ -722,7 +746,7 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
                 self.builder.switch_to_block(else_block);
                 self.builder.seal_block(else_block);
                 let else_return = if let Some(els) = els {
-                    self.compile(els)
+                    self.compile(els)?
                 } else {
                     self.builder.ins().f64const(0.0)
                 };
@@ -740,26 +764,19 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
                 // parameter.
                 let phi = self.builder.block_params(merge_block)[0];
 
-                phi
+                Ok(phi)
             }
             ASTNode::Stmts(stmts) => {
                 let mut value = None;
                 for ast in stmts {
-                    value = Some(self.compile(ast));
+                    value = Some(self.compile(ast)?);
                 }
                 if let Some(value) = value {
-                    value
+                    Ok(value)
                 } else {
-                    self.builder.ins().f64const(0.0)
+                    Ok(self.builder.ins().f64const(0.0))
                 }
             }
-            _ => self.builder.ins().f64const(42.23),
-            //    ASTNode::Lit(f64),
-            //    ASTNode::Var(String),
-            //    ASTNode::Assign(String),
-            //    ASTNode::BinOp(ASTBinOp, Box<ASTNode>, Box<ASTNode>),
-            //    ASTNode::If(Box<ASTNode>, Box<ASTNode>, Option<Box<ASTNode>>),
-            //    ASTNode::Stmts(Vec<Box<ASTNode>>),
         }
     }
 }
@@ -1015,7 +1032,7 @@ impl DSPNodeType for TestNodeType {
     }
 
     fn allocate_state(&self) -> Option<*mut u8> {
-        Some(unsafe { Box::into_raw(Box::new(TSTState { l: 0.0 })) } as *mut u8)
+        Some(Box::into_raw(Box::new(TSTState { l: 0.0 })) as *mut u8)
     }
 
     fn deallocate_state(&self, ptr: *mut u8) {
