@@ -234,12 +234,6 @@ fn check_jit_wlambda() {
         .borrow_mut()
         .set_module("jit", wlapi::setup_jit_module());
     let mut ctx = wlambda::compiler::EvalContext::new(global_env);
-    /*
-    !fconst1 = jit:node 10.0;
-    !var = jit:node "var";
-    !assign = jit:node $[:assign, var, fconst1];
-    !assign2 = jit:node $[:assign, var, 10.0];
-    */
 
     let ast: VVal =
         ctx.eval(r#"

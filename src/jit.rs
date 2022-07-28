@@ -6,8 +6,10 @@ use cranelift_codegen::settings::{self, Configurable};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::default_libcall_names;
 use cranelift_module::{DataContext, FuncId, Linkage, Module};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::mem;
+use std::rc::Rc;
 use std::slice;
 
 #[derive(Debug, Clone, Copy)]
@@ -274,6 +276,12 @@ pub struct TSTState {
     pub l: f64,
 }
 
+impl TSTState {
+    pub fn new() -> Self {
+        Self { l: 0.0 }
+    }
+}
+
 pub fn test(x: f64, state: *mut DSPState, mystate: *mut std::ffi::c_void) -> f64 {
     unsafe {
         let p = mystate as *mut TSTState;
@@ -281,6 +289,63 @@ pub fn test(x: f64, state: *mut DSPState, mystate: *mut std::ffi::c_void) -> f64
         (*state).y = (*p).l;
     };
     x * 10000.0 + 1.0
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum FuncType {
+    Test,
+}
+
+impl FuncType {
+    pub fn alloc_new_state(&self) -> *mut u8 {
+        match self {
+            FuncType::Test => Box::into_raw(Box::new(TSTState::new())) as *mut u8,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct FunctionState {
+    func_type: FuncType,
+    ptr: *mut u8,
+    generation: u64,
+}
+
+impl FunctionState {
+    pub fn new(func_type: FuncType) -> Self {
+        Self {
+            func_type,
+            ptr: func_type.alloc_new_state(),
+            generation: 0,
+        }
+    }
+
+    pub fn mark(&mut self, gen: u64) {
+        self.generation = gen;
+    }
+}
+
+impl Drop for FunctionState {
+    fn drop(&mut self) {
+        match self.func_type {
+            FuncType::Test => {
+                unsafe { Box::from_raw(self.ptr) };
+                self.ptr = std::ptr::null_mut();
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FunctionStateTable {
+    state: *mut DSPState,
+    func_states: HashMap<u64, Rc<RefCell<FunctionState>>>,
+    generation: u64,
+}
+
+pub struct DSPFunction {
+    state: *mut DSPState,
+    func_states: Vec<*mut u8>,
 }
 
 impl<'a> FunctionTranslator<'a> {
