@@ -52,10 +52,7 @@ pub fn vv2ast_node(mut v: VVal) -> Result<Box<ASTNode>, ASTError> {
         }
     } else if v.iter_over_vvals() {
         v.v_(0).with_s_ref(|s| match s {
-            "assign" => Ok(Box::new(ASTNode::Assign(
-                v.v_s_raw(1),
-                vv2ast_node(v.v_(2))?,
-            ))),
+            "assign" => Ok(Box::new(ASTNode::Assign(v.v_s_raw(1), vv2ast_node(v.v_(2))?))),
             "stmts" => {
                 let mut stmts = vec![];
                 for i in 1..v.len() {
@@ -71,11 +68,7 @@ pub fn vv2ast_node(mut v: VVal) -> Result<Box<ASTNode>, ASTError> {
                         Some(vv2ast_node(v.v_(3))?),
                     )))
                 } else {
-                    Ok(Box::new(ASTNode::If(
-                        vv2ast_node(v.v_(1))?,
-                        vv2ast_node(v.v_(2))?,
-                        None,
-                    )))
+                    Ok(Box::new(ASTNode::If(vv2ast_node(v.v_(1))?, vv2ast_node(v.v_(2))?, None)))
                 }
             }
             "call" => {
@@ -86,17 +79,9 @@ pub fn vv2ast_node(mut v: VVal) -> Result<Box<ASTNode>, ASTError> {
                         vv2ast_node(v.v_(3))?,
                     )))
                 } else if v.len() == 3 {
-                    Ok(Box::new(ASTNode::Call(
-                        v.v_s_raw(1),
-                        0,
-                        vv2ast_node(v.v_(2))?,
-                    )))
+                    Ok(Box::new(ASTNode::Call(v.v_s_raw(1), 0, vv2ast_node(v.v_(2))?)))
                 } else {
-                    Ok(Box::new(ASTNode::Call(
-                        v.v_s_raw(1),
-                        0,
-                        Box::new(ASTNode::Lit(0.0)),
-                    )))
+                    Ok(Box::new(ASTNode::Call(v.v_s_raw(1), 0, Box::new(ASTNode::Lit(0.0)))))
                 }
             }
             "binop" => {

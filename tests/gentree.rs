@@ -21,11 +21,7 @@ impl DebugASTNodeRef {
         } else {
             "".to_string()
         };
-        let inport = if input.len() > 0 {
-            format!("(in:{})", input)
-        } else {
-            "".to_string()
-        };
+        let inport = if input.len() > 0 { format!("(in:{})", input) } else { "".to_string() };
 
         let mut s = if self.0.borrow().lbl.len() == 0 {
             if output.len() > 0 {
@@ -35,13 +31,7 @@ impl DebugASTNodeRef {
             }
         } else {
             if output.len() > 0 {
-                format!(
-                    "{}:{}(out:{}){}",
-                    self.0.borrow().typ,
-                    self.0.borrow().lbl,
-                    output,
-                    inport
-                )
+                format!("{}:{}(out:{}){}", self.0.borrow().typ, self.0.borrow().lbl, output, inport)
             } else {
                 format!("{}:{}{}", self.0.borrow().typ, self.0.borrow().lbl, inport)
             }
@@ -147,11 +137,7 @@ fn prepare(blocks: &[(usize, i64, i64, &str, Option<&str>)]) -> Rc<RefCell<Block
         name: "->3".to_string(),
         rows: 3,
         inputs: vec![Some("".to_string())],
-        outputs: vec![
-            Some("".to_string()),
-            Some("".to_string()),
-            Some("".to_string()),
-        ],
+        outputs: vec![Some("".to_string()), Some("".to_string()), Some("".to_string())],
         area_count: 0,
         user_input: BlockUserInput::None,
         description: "Forwards the value one block and sends it to multiple destinations"
@@ -337,10 +323,7 @@ fn check_set() {
     assert_eq!(gen(&[(0, 2, 2, "set", Some("x"))]), "<r>[<a>[set:x[zero]]]");
 
     assert_eq!(
-        gen(&[
-            (0, 1, 2, "number", Some("0.6")),
-            (0, 2, 2, "set", Some("x")),
-        ]),
+        gen(&[(0, 1, 2, "number", Some("0.6")), (0, 2, 2, "set", Some("x")),]),
         "<r>[<a>[set:x[number:0.6]]]"
     );
 
@@ -358,21 +341,15 @@ fn check_set() {
 #[test]
 fn check_named_inputs() {
     assert_eq!(
-        gen(&[
-            (0, 2, 3, "number", Some("0.4")),
-            (0, 3, 3, "-", None),
-            (0, 4, 3, "set", Some("o")),
-        ]),
+        gen(
+            &[(0, 2, 3, "number", Some("0.4")), (0, 3, 3, "-", None), (0, 4, 3, "set", Some("o")),]
+        ),
         "<r>[<a>[set:o[-:-[number:0.4(in:a),zero(in:b)]]]]"
     );
 
     assert_eq!(
         gen_do(
-            &[
-                (0, 2, 3, "number", Some("0.4")),
-                (0, 3, 3, "-", None),
-                (0, 4, 3, "set", Some("o")),
-            ],
+            &[(0, 2, 3, "number", Some("0.4")), (0, 3, 3, "-", None), (0, 4, 3, "set", Some("o")),],
             |fun| fun.shift_port(0, 3, 3, 0, false)
         ),
         "<r>[<a>[set:o[-:-[number:0.4(in:b),zero(in:a)]]]]"
@@ -382,13 +359,11 @@ fn check_named_inputs() {
 #[test]
 fn check_shift_outs() {
     assert_eq!(
-        gen_do(&[(0, 3, 3, "+", None),], |fun| fun
-            .shift_port(0, 3, 3, 0, false)),
+        gen_do(&[(0, 3, 3, "+", None),], |fun| fun.shift_port(0, 3, 3, 0, false)),
         "<r>[<a>[<res>[+:+[zero,zero]]]]"
     );
     assert_eq!(
-        gen_do(&[(0, 3, 3, "+", None),], |fun| fun
-            .shift_port(0, 3, 3, 0, true)),
+        gen_do(&[(0, 3, 3, "+", None),], |fun| fun.shift_port(0, 3, 3, 0, true)),
         "<r>[<a>[<res>[+:+[zero,zero]]]]"
     );
 }
@@ -425,10 +400,7 @@ fn check_shared_ast_nodes() {
 
 #[test]
 fn check_if() {
-    assert_eq!(
-        gen(&[(0, 3, 3, "if", None),]),
-        "<r>[<a>[<res>[if:if[zero,<a>,<a>]]]]"
-    );
+    assert_eq!(gen(&[(0, 3, 3, "if", None),]), "<r>[<a>[<res>[if:if[zero,<a>,<a>]]]]");
 
     assert_eq!(
         gen(&[(0, 3, 3, "if", None), (1, 1, 1, "number", Some("0.3")),]),
@@ -488,14 +460,8 @@ fn check_snapshot() {
     bcode.remove_at(0, 3, 3).expect("remove works");
 
     assert_eq!(gen_code(&mut bcode, true), "<r>[<a>]");
-    exec(
-        &mut bcode,
-        &[(0, 3, 3, "if", None), (1, 1, 1, "number", Some("0.3"))],
-    );
-    assert_eq!(
-        gen_code(&mut bcode, true),
-        "<r>[<a>[<res>[4#if:if[zero,<a>,<a>]]]]"
-    );
+    exec(&mut bcode, &[(0, 3, 3, "if", None), (1, 1, 1, "number", Some("0.3"))]);
+    assert_eq!(gen_code(&mut bcode, true), "<r>[<a>[<res>[4#if:if[zero,<a>,<a>]]]]");
 
     bcode.load_snapshot(&snapshot);
     assert_eq!(

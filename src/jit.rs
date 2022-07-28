@@ -29,7 +29,6 @@ pub struct JIT {
 
     // /// The data context, which is to data objects what `ctx` is to functions.
     // data_ctx: DataContext,
-
     /// The module, with the jit backend, which manages the JIT'd
     /// functions.
     module: Option<JITModule>,
@@ -47,9 +46,7 @@ impl JIT {
         let isa_builder = cranelift_native::builder().unwrap_or_else(|msg| {
             panic!("host machine is not supported: {}", msg);
         });
-        let isa = isa_builder
-            .finish(settings::Flags::new(flag_builder))
-            .unwrap();
+        let isa = isa_builder.finish(settings::Flags::new(flag_builder)).unwrap();
         let mut builder = JITBuilder::with_isa(isa, default_libcall_names());
 
         dsp_lib.borrow().for_each(|typ| {
@@ -277,9 +274,7 @@ impl DSPNodeState {
     pub fn new(node_type: Rc<dyn DSPNodeType>) -> Self {
         Self {
             node_type: node_type.clone(),
-            ptr: node_type
-                .allocate_state()
-                .expect("DSPNodeState created for stateful node type"),
+            ptr: node_type.allocate_state().expect("DSPNodeState created for stateful node type"),
             generation: 0,
             collection_index: 0,
         }
@@ -504,8 +499,7 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
         self.ptr_w = ptr_type.bytes();
 
         let entry_block = self.builder.create_block();
-        self.builder
-            .append_block_params_for_function_params(entry_block);
+        self.builder.append_block_params_for_function_params(entry_block);
         self.builder.switch_to_block(entry_block);
         self.builder.seal_block(entry_block);
 
@@ -604,23 +598,17 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
                     }
                     ASTBinOp::Ge => {
                         let cmp_res =
-                            self.builder
-                                .ins()
-                                .fcmp(FloatCC::GreaterThanOrEqual, value_a, value_b);
+                            self.builder.ins().fcmp(FloatCC::GreaterThanOrEqual, value_a, value_b);
                         self.ins_b_to_f64(cmp_res)
                     }
                     ASTBinOp::Le => {
                         let cmp_res =
-                            self.builder
-                                .ins()
-                                .fcmp(FloatCC::LessThanOrEqual, value_a, value_b);
+                            self.builder.ins().fcmp(FloatCC::LessThanOrEqual, value_a, value_b);
                         self.ins_b_to_f64(cmp_res)
                     }
                     ASTBinOp::Gt => {
                         let cmp_res =
-                            self.builder
-                                .ins()
-                                .fcmp(FloatCC::GreaterThan, value_a, value_b);
+                            self.builder.ins().fcmp(FloatCC::GreaterThan, value_a, value_b);
                         self.ins_b_to_f64(cmp_res)
                     }
                     ASTBinOp::Lt => {
@@ -657,18 +645,13 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
                         Offset32::new(*fstate_index as i32 * self.ptr_w as i32),
                     );
 
-                    let local_callee = self
-                        .module
-                        .declare_func_in_func(func_id, &mut self.builder.func);
-                    let call = self
-                        .builder
-                        .ins()
-                        .call(local_callee, &[value_arg, ptr, func_state]);
+                    let local_callee =
+                        self.module.declare_func_in_func(func_id, &mut self.builder.func);
+                    let call = self.builder.ins().call(local_callee, &[value_arg, ptr, func_state]);
                     Ok(self.builder.inst_results(call)[0])
                 } else {
-                    let local_callee = self
-                        .module
-                        .declare_func_in_func(func_id, &mut self.builder.func);
+                    let local_callee =
+                        self.module.declare_func_in_func(func_id, &mut self.builder.func);
                     let call = self.builder.ins().call(local_callee, &[value_arg]);
                     Ok(self.builder.inst_results(call)[0])
                 }
@@ -714,10 +697,7 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
                 } else {
                     let res = self.compile(cond)?;
                     let cmpv = self.builder.ins().f64const(0.5);
-                    self
-                        .builder
-                        .ins()
-                        .fcmp(FloatCC::GreaterThanOrEqual, res, cmpv)
+                    self.builder.ins().fcmp(FloatCC::GreaterThanOrEqual, res, cmpv)
                 };
 
                 let then_block = self.builder.create_block();

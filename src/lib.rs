@@ -2,15 +2,15 @@
 // This file is a part of WBlockDSP. Released under GPL-3.0-or-later.
 // See README.md and COPYING for details.
 
-mod jit;
-mod block_view;
-mod block_lang;
 mod ast;
+mod block_lang;
+mod block_view;
+mod jit;
 pub mod wlapi;
 
 pub use ast::*;
-pub use block_view::*;
 pub use block_lang::*;
+pub use block_view::*;
 
 pub use jit::*;
 

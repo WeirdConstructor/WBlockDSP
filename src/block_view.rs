@@ -16,4 +16,3 @@ pub trait BlockCodeView {
     fn block_at(&self, id: usize, x: i64, y: i64) -> Option<&dyn BlockView>;
     fn origin_at(&self, id: usize, x: i64, y: i64) -> Option<(i64, i64)>;
 }
-

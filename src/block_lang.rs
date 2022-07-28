@@ -13,15 +13,11 @@ pub struct BlockIDGenerator {
 
 impl BlockIDGenerator {
     pub fn new() -> Self {
-        Self {
-            counter: Rc::new(RefCell::new(0)),
-        }
+        Self { counter: Rc::new(RefCell::new(0)) }
     }
 
     pub fn new_with_id(id: usize) -> Self {
-        Self {
-            counter: Rc::new(RefCell::new(id)),
-        }
+        Self { counter: Rc::new(RefCell::new(id)) }
     }
 
     pub fn current(&self) -> usize {
@@ -93,11 +89,7 @@ impl Block {
             return;
         }
 
-        let v = if output {
-            &mut self.outputs
-        } else {
-            &mut self.inputs
-        };
+        let v = if output { &mut self.outputs } else { &mut self.inputs };
 
         if v.len() < self.rows {
             v.resize(self.rows, None);
@@ -293,8 +285,7 @@ impl BlockChain {
     }
 
     fn sort_load_pos(&mut self) {
-        self.load
-            .sort_by(|&(_, x0, y0), &(_, x1, y1)| x0.cmp(&x1).then(y0.cmp(&y1)));
+        self.load.sort_by(|&(_, x0, y0), &(_, x1, y1)| x0.cmp(&x1).then(y0.cmp(&y1)));
     }
 
     pub fn get_connected_inputs_from_load_at_x(&self, x_split: i64) -> Vec<(i64, i64)> {
@@ -312,11 +303,7 @@ impl BlockChain {
         for (block, x, y) in &self.load {
             if *x == (x_split + 1) {
                 block.for_input_ports(|row, _| {
-                    if output_points
-                        .iter()
-                        .find(|&&out_y| out_y == (y + (row as i64)))
-                        .is_some()
-                    {
+                    if output_points.iter().find(|&&out_y| out_y == (y + (row as i64))).is_some() {
                         connection_pos.push((*x, y + (row as i64)));
                     }
                 });
@@ -367,8 +354,7 @@ impl BlockChain {
 
         for b in &self.blocks {
             if let Some((block, xo, yo)) = area.ref_at_origin(b.0, b.1) {
-                self.load
-                    .push((Box::new(block.clone_with_new_id(id_gen.next())), xo, yo));
+                self.load.push((Box::new(block.clone_with_new_id(id_gen.next())), xo, yo));
             }
         }
 
@@ -552,13 +538,7 @@ impl BlockArea {
             }
         }
 
-        Some(Box::new(BlockChain {
-            area_id: 0,
-            blocks,
-            sources,
-            sinks,
-            load: vec![],
-        }))
+        Some(Box::new(BlockChain { area_id: 0, blocks, sources, sinks, load: vec![] }))
     }
 
     pub fn find_last_unconnected_output(&self) -> Option<(i64, i64, String)> {
@@ -624,10 +604,7 @@ impl BlockArea {
                 sinks_out.push((*x, *y, None));
             } else {
                 block.for_output_ports(|row, _| {
-                    if self
-                        .find_port_at(*x + 1, *y + (row as i64), false)
-                        .is_none()
-                    {
+                    if self.find_port_at(*x + 1, *y + (row as i64), false).is_none() {
                         sinks_out.push((*x, *y + (row as i64), Some(row)));
                     }
                 });
@@ -778,16 +755,8 @@ impl BlockArea {
             (min_w, min_h)
         } else {
             (
-                if self.size.0 < min_w {
-                    min_w
-                } else {
-                    self.size.0
-                },
-                if self.size.1 < min_h {
-                    min_h
-                } else {
-                    self.size.1
-                },
+                if self.size.0 < min_w { min_w } else { self.size.0 },
+                if self.size.1 < min_h { min_h } else { self.size.1 },
             )
         }
     }
@@ -870,11 +839,7 @@ impl BlockType {
             contains: (None, None),
             expanded: true,
             typ: self.name.clone(),
-            lbl: if let Some(inp) = user_input {
-                inp
-            } else {
-                self.name.clone()
-            },
+            lbl: if let Some(inp) = user_input { inp } else { self.name.clone() },
             inputs: self.inputs.clone(),
             outputs: self.outputs.clone(),
             color: self.color,
@@ -892,10 +857,7 @@ pub struct BlockLanguage {
 
 impl BlockLanguage {
     pub fn new() -> Self {
-        Self {
-            types: HashMap::new(),
-            identifiers: HashMap::new(),
-        }
+        Self { types: HashMap::new(), identifiers: HashMap::new() }
     }
 
     pub fn define_identifier(&mut self, id: &str) {
@@ -960,27 +922,10 @@ pub struct BlockFun {
 
 #[derive(Debug)]
 enum GenTreeJob<N: BlockASTNode> {
-    Node {
-        node: N,
-        out: N,
-    },
-    Output {
-        area_id: usize,
-        x: i64,
-        y: i64,
-        in_port: String,
-        out: N,
-    },
-    Sink {
-        area_id: usize,
-        x: i64,
-        y: i64,
-        out: N,
-    },
-    Area {
-        area_id: usize,
-        out: N,
-    },
+    Node { node: N, out: N },
+    Output { area_id: usize, x: i64, y: i64, in_port: String, out: N },
+    Sink { area_id: usize, x: i64, y: i64, out: N },
+    Area { area_id: usize, out: N },
 }
 
 impl BlockFun {
@@ -1038,10 +983,7 @@ impl BlockFun {
 
         let main_node = Node::from(0, "<r>", "");
 
-        tree_builder.push(GenTreeJob::<Node>::Area {
-            area_id: 0,
-            out: main_node.clone(),
-        });
+        tree_builder.push(GenTreeJob::<Node>::Area { area_id: 0, out: main_node.clone() });
 
         // A HashMap to store those blocks, that have multiple outputs.
         // Their AST nodes need to be shared to multiple parent nodes.
@@ -1051,10 +993,8 @@ impl BlockFun {
         while let Some(job) = tree_builder.pop() {
             match job {
                 GenTreeJob::<Node>::Area { area_id, out } => {
-                    let area = self
-                        .areas
-                        .get(area_id)
-                        .ok_or(BlockDSPError::UnknownArea(area_id))?;
+                    let area =
+                        self.areas.get(area_id).ok_or(BlockDSPError::UnknownArea(area_id))?;
 
                     let sinks = area.collect_sinks();
 
@@ -1091,10 +1031,8 @@ impl BlockFun {
                     out.add_structural_node(node);
                 }
                 GenTreeJob::<Node>::Sink { area_id, x, y, out } => {
-                    let area = self
-                        .areas
-                        .get(area_id)
-                        .ok_or(BlockDSPError::UnknownArea(area_id))?;
+                    let area =
+                        self.areas.get(area_id).ok_or(BlockDSPError::UnknownArea(area_id))?;
 
                     if let Some((block, xo, yo)) = area.ref_at_origin(x, y) {
                         let (node, needs_init) =
@@ -1135,17 +1073,9 @@ impl BlockFun {
                         }
                     }
                 }
-                GenTreeJob::<Node>::Output {
-                    area_id,
-                    x,
-                    y,
-                    in_port,
-                    out,
-                } => {
-                    let area = self
-                        .areas
-                        .get(area_id)
-                        .ok_or(BlockDSPError::UnknownArea(area_id))?;
+                GenTreeJob::<Node>::Output { area_id, x, y, in_port, out } => {
+                    let area =
+                        self.areas.get(area_id).ok_or(BlockDSPError::UnknownArea(area_id))?;
 
                     if let Some((block, xo, yo)) = area.ref_at_origin(x, y) {
                         let row = y - yo;
@@ -1347,9 +1277,8 @@ impl BlockFun {
         let lang = self.language.clone();
 
         let (mut block, _xo, yo) = if let Some(area) = self.areas.get_mut(id) {
-            let (block, xo, yo) = area
-                .ref_mut_at_origin(x, y)
-                .ok_or(BlockDSPError::NoBlockAt(id, x, y))?;
+            let (block, xo, yo) =
+                area.ref_mut_at_origin(x, y).ok_or(BlockDSPError::NoBlockAt(id, x, y))?;
 
             let mut new_block = Box::new(block.clone_with_new_id(self.id_gen.next()));
             if let Some(typ) = lang.borrow().types.get(&new_block.typ) {
@@ -1370,10 +1299,7 @@ impl BlockFun {
             y2 = (y2 - offs).max(0);
         }
 
-        let area2 = self
-            .areas
-            .get_mut(id2)
-            .ok_or(BlockDSPError::UnknownArea(id2))?;
+        let area2 = self.areas.get_mut(id2).ok_or(BlockDSPError::UnknownArea(id2))?;
         let rows = block.rows;
 
         if area2.check_space_at(x2, y2, block.rows) {
@@ -1391,15 +1317,9 @@ impl BlockFun {
         y: i64,
         filler_type: Option<&str>,
     ) -> Result<(), BlockDSPError> {
-        let mut area_clone = self
-            .areas
-            .get(id)
-            .ok_or(BlockDSPError::UnknownArea(id))?
-            .clone();
+        let mut area_clone = self.areas.get(id).ok_or(BlockDSPError::UnknownArea(id))?.clone();
 
-        let mut chain = area_clone
-            .chain_at(x, y)
-            .ok_or(BlockDSPError::NoBlockAt(id, x, y))?;
+        let mut chain = area_clone.chain_at(x, y).ok_or(BlockDSPError::NoBlockAt(id, x, y))?;
 
         chain.remove_load(area_clone.as_mut());
 
@@ -1436,15 +1356,9 @@ impl BlockFun {
         x2: i64,
         y2: i64,
     ) -> Result<(), BlockDSPError> {
-        let mut area_clone = self
-            .areas
-            .get(id)
-            .ok_or(BlockDSPError::UnknownArea(id))?
-            .clone();
+        let mut area_clone = self.areas.get(id).ok_or(BlockDSPError::UnknownArea(id))?.clone();
 
-        let mut chain = area_clone
-            .chain_at(x, y)
-            .ok_or(BlockDSPError::NoBlockAt(id, x, y))?;
+        let mut chain = area_clone.chain_at(x, y).ok_or(BlockDSPError::NoBlockAt(id, x, y))?;
 
         chain.remove_load(area_clone.as_mut());
 
@@ -1475,11 +1389,8 @@ impl BlockFun {
             //      chain outside the subarea accendentally!
             chain.move_by_offs((grab_x_offs + x2).max(0), (grab_y_offs + y2).max(0));
 
-            let mut area2_clone = self
-                .areas
-                .get(id2)
-                .ok_or(BlockDSPError::UnknownArea(id))?
-                .clone();
+            let mut area2_clone =
+                self.areas.get(id2).ok_or(BlockDSPError::UnknownArea(id))?.clone();
 
             if !chain.try_fit_load_into_space(&mut area2_clone) {
                 return Err(BlockDSPError::NoSpaceAvailable(id, x2, y2, 1));
@@ -1514,8 +1425,7 @@ impl BlockFun {
         }
 
         let (block, xo, yo) = if let Some(area) = self.areas.get_mut(id) {
-            area.remove_at(x, y)
-                .ok_or(BlockDSPError::NoBlockAt(id, x, y))?
+            area.remove_at(x, y).ok_or(BlockDSPError::NoBlockAt(id, x, y))?
         } else {
             return Err(BlockDSPError::UnknownArea(id));
         };
@@ -1527,10 +1437,7 @@ impl BlockFun {
             y2 = (y2 - offs).max(0);
         }
 
-        let area2 = self
-            .areas
-            .get_mut(id2)
-            .ok_or(BlockDSPError::UnknownArea(id2))?;
+        let area2 = self.areas.get_mut(id2).ok_or(BlockDSPError::UnknownArea(id2))?;
         let rows = block.rows;
 
         if area2.check_space_at(x2, y2, block.rows) {
@@ -1581,10 +1488,8 @@ impl BlockFun {
                 return Err(BlockDSPError::UnknownArea(id));
             }
 
-            let typ = lang
-                .types
-                .get(typ)
-                .ok_or(BlockDSPError::UnknownLanguageType(typ.to_string()))?;
+            let typ =
+                lang.types.get(typ).ok_or(BlockDSPError::UnknownLanguageType(typ.to_string()))?;
 
             typ.instanciate_block(user_input, self.id_gen.clone())
         };
@@ -1599,12 +1504,8 @@ impl BlockFun {
     }
 
     pub fn remove_at(&mut self, id: usize, x: i64, y: i64) -> Result<(), BlockDSPError> {
-        let area = self
-            .areas
-            .get_mut(id)
-            .ok_or(BlockDSPError::UnknownArea(id))?;
-        area.remove_at(x, y)
-            .ok_or(BlockDSPError::NoBlockAt(id, x, y))?;
+        let area = self.areas.get_mut(id).ok_or(BlockDSPError::UnknownArea(id))?;
+        area.remove_at(x, y).ok_or(BlockDSPError::NoBlockAt(id, x, y))?;
         Ok(())
     }
 
@@ -1618,10 +1519,7 @@ impl BlockFun {
     }
 
     pub fn origin_at(&self, id: usize, x: i64, y: i64) -> Option<(i64, i64)> {
-        self.areas
-            .get(id)
-            .map(|a| a.origin_map.get(&(x, y)).copied())
-            .flatten()
+        self.areas.get(id).map(|a| a.origin_map.get(&(x, y)).copied()).flatten()
     }
 }
 
