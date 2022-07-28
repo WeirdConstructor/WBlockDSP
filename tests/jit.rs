@@ -27,7 +27,7 @@ fn check_jit() {
             ASTBinOp::Add,
             Box::new(ASTNode::If(
                 Box::new(ASTNode::Var("in2".to_string())),
-                Box::new(ASTNode::Call("test".to_string(), 1, Box::new(ASTNode::Lit(11.0)))),
+                Box::new(ASTNode::Call("test".to_string(), 1, vec![Box::new(ASTNode::Lit(11.0))])),
                 Some(Box::new(ASTNode::Lit(99.12))),
             )),
             Box::new(ASTNode::Var("in1".to_string())),
@@ -166,7 +166,7 @@ fn run_ast(ast: Box<ASTNode>, in1: f64, in2: f64) -> (f64, f64, f64) {
 fn check_jit_sin() {
     let mut jit = JIT::new(get_default_library());
 
-    let ast = ASTNode::Call("sin".to_string(), 0, Box::new(ASTNode::Lit(0.5 * 3.14)));
+    let ast = ASTNode::Call("sin".to_string(), 0, vec![Box::new(ASTNode::Lit(0.5 * 3.14))]);
 
     let fun = ASTFun::new(Box::new(ast));
     let code = jit.compile(fun).unwrap();

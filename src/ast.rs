@@ -119,8 +119,10 @@ fn walk_ast<F: FnMut(&mut ASTNode)>(node: &mut ASTNode, f: &mut F) {
                 walk_ast(expr3.as_mut(), f);
             }
         }
-        ASTNode::Call(_, _, expr) => {
-            walk_ast(expr.as_mut(), f);
+        ASTNode::Call(_, _, exprs) => {
+            for e in exprs.iter_mut() {
+                walk_ast(e.as_mut(), f);
+            }
         }
         ASTNode::Stmts(stmts) => {
             for s in stmts.iter_mut() {
@@ -137,7 +139,7 @@ pub enum ASTNode {
     Assign(String, Box<ASTNode>),
     BinOp(ASTBinOp, Box<ASTNode>, Box<ASTNode>),
     If(Box<ASTNode>, Box<ASTNode>, Option<Box<ASTNode>>),
-    Call(String, usize, Box<ASTNode>),
+    Call(String, usize, Vec<Box<ASTNode>>),
     Stmts(Vec<Box<ASTNode>>),
 }
 
@@ -187,8 +189,10 @@ impl ASTNode {
                     s += &n.dump(indent + 1);
                 }
             }
-            ASTNode::Call(_, _, a) => {
-                s += &a.dump(indent + 1);
+            ASTNode::Call(_, _, args) => {
+                for (i, a) in args.iter().enumerate() {
+                    s += &format!("[{}] {}", i, &a.dump(indent + 1));
+                }
             }
             ASTNode::Stmts(stmts) => {
                 for n in stmts {

@@ -73,15 +73,26 @@ pub fn vv2ast_node(mut v: VVal) -> Result<Box<ASTNode>, ASTError> {
             }
             "call" => {
                 if v.len() == 4 {
-                    Ok(Box::new(ASTNode::Call(
-                        v.v_s_raw(1),
-                        v.v_i(2) as usize,
-                        vv2ast_node(v.v_(3))?,
-                    )))
+                    if v.v_(3).is_vec() {
+                        let mut args = vec![];
+                        v.v_(3).with_iter(|iter| {
+                            for (v, _) in iter {
+                                args.push(vv2ast_node(v)?);
+                            }
+                            Ok(())
+                        })?;
+                        Ok(Box::new(ASTNode::Call(v.v_s_raw(1), v.v_i(2) as usize, args)))
+                    } else {
+                        Ok(Box::new(ASTNode::Call(
+                            v.v_s_raw(1),
+                            v.v_i(2) as usize,
+                            vec![vv2ast_node(v.v_(3))?],
+                        )))
+                    }
                 } else if v.len() == 3 {
-                    Ok(Box::new(ASTNode::Call(v.v_s_raw(1), 0, vv2ast_node(v.v_(2))?)))
+                    Ok(Box::new(ASTNode::Call(v.v_s_raw(1), 0, vec![vv2ast_node(v.v_(2))?])))
                 } else {
-                    Ok(Box::new(ASTNode::Call(v.v_s_raw(1), 0, Box::new(ASTNode::Lit(0.0)))))
+                    Ok(Box::new(ASTNode::Call(v.v_s_raw(1), 0, vec![Box::new(ASTNode::Lit(0.0))])))
                 }
             }
             "binop" => {

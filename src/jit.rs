@@ -392,6 +392,7 @@ pub enum JITCompileError {
     DeclareTopFunError(String),
     DefineTopFunError(String),
     UndefinedDSPNode(String),
+    NotEnoughArgsInCall(String, usize),
 }
 
 impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
@@ -614,48 +615,62 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
 
                 Ok(value)
             }
-            ASTNode::Call(name, fstate_index, arg) => {
-                let value_arg = self.compile(arg)?;
-
+            ASTNode::Call(name, fstate_index, args) => {
                 let func = self
                     .functions
                     .get(name)
-                    .ok_or_else(|| JITCompileError::UndefinedDSPNode(name.to_string()))?;
+                    .ok_or_else(|| JITCompileError::UndefinedDSPNode(name.to_string()))?
+                    .clone();
                 let func_id = func.1;
 
-                if name == "test" {
-                    // TODO: Use the DSPNodeType here to determine which arguments to pass!
-                    // TODO: Then use the DSPNodeContext to allocate and prepare the
-                    //       &state and &fstate locals!
-                    let ptr_type = self.module.target_config().pointer_type();
-                    let state_var = self
-                        .variables
-                        .get("&state")
-                        .ok_or_else(|| JITCompileError::UndefinedVariable("&state".to_string()))?;
-                    let ptr = self.builder.use_var(*state_var);
+                let ptr_type = self.module.target_config().pointer_type();
 
-                    let fstate_var = self
-                        .variables
-                        .get("&fstate")
-                        .ok_or_else(|| JITCompileError::UndefinedVariable("&fstate".to_string()))?;
-                    let fptr = self.builder.use_var(*fstate_var);
-                    let func_state = self.builder.ins().load(
-                        ptr_type,
-                        MemFlags::new(),
-                        fptr,
-                        Offset32::new(*fstate_index as i32 * self.ptr_w as i32),
-                    );
+                let mut dsp_node_fun_params = vec![];
+                let mut i = 0;
+                let mut arg_idx = 0;
+                while let Some(bit) = func.0.signature(i) {
+                    match bit {
+                        DSPNodeSigBit::Value => {
+                            if arg_idx >= args.len() {
+                                return Err(JITCompileError::NotEnoughArgsInCall(
+                                    name.to_string(),
+                                    *fstate_index,
+                                ));
+                            }
+                            dsp_node_fun_params.push(self.compile(&args[arg_idx])?);
+                            arg_idx += 1;
+                        }
+                        DSPNodeSigBit::DSPStatePtr => {
+                            let state_var = self.variables.get("&state").ok_or_else(|| {
+                                JITCompileError::UndefinedVariable("&state".to_string())
+                            })?;
+                            dsp_node_fun_params.push(self.builder.use_var(*state_var));
+                        }
+                        DSPNodeSigBit::NodeStatePtr => {
+                            let fstate_var = self.variables.get("&fstate").ok_or_else(|| {
+                                JITCompileError::UndefinedVariable("&fstate".to_string())
+                            })?;
+                            let fptr = self.builder.use_var(*fstate_var);
+                            let func_state = self.builder.ins().load(
+                                ptr_type,
+                                MemFlags::new(),
+                                fptr,
+                                Offset32::new(*fstate_index as i32 * self.ptr_w as i32),
+                            );
+                            dsp_node_fun_params.push(func_state);
+                        }
+                    }
 
-                    let local_callee =
-                        self.module.declare_func_in_func(func_id, &mut self.builder.func);
-                    let call = self.builder.ins().call(local_callee, &[value_arg, ptr, func_state]);
-                    Ok(self.builder.inst_results(call)[0])
-                } else {
-                    let local_callee =
-                        self.module.declare_func_in_func(func_id, &mut self.builder.func);
-                    let call = self.builder.ins().call(local_callee, &[value_arg]);
-                    Ok(self.builder.inst_results(call)[0])
+                    i += 1;
                 }
+
+                // TODO: Then use the DSPNodeContext to allocate and prepare the
+                //       &state and &fstate locals!
+
+                let local_callee =
+                    self.module.declare_func_in_func(func_id, &mut self.builder.func);
+                let call = self.builder.ins().call(local_callee, &dsp_node_fun_params);
+                Ok(self.builder.inst_results(call)[0])
             }
             ASTNode::If(cond, then, els) => {
                 let condition_value = if let ASTNode::BinOp(op, a, b) = cond.as_ref() {
