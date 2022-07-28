@@ -1,12 +1,13 @@
-use cranelift::prelude::*;
 use cranelift::prelude::types::F64;
 use cranelift::prelude::InstBuilder;
-use cranelift_jit::{JITBuilder, JITModule};
-use cranelift_module::{DataContext, Linkage, Module, FuncId};
-use cranelift_module::{default_libcall_names};
+use cranelift::prelude::*;
+use cranelift_codegen::ir::immediates::Offset32;
 use cranelift_codegen::settings::{self, Configurable};
-use std::mem;
+use cranelift_jit::{JITBuilder, JITModule};
+use cranelift_module::default_libcall_names;
+use cranelift_module::{DataContext, FuncId, Linkage, Module};
 use std::collections::HashMap;
+use std::mem;
 use std::slice;
 
 #[derive(Debug, Clone, Copy)]
@@ -27,7 +28,7 @@ pub enum ASTBinOp {
 pub struct ASTFun {
     params: Vec<String>,
     locals: Vec<String>,
-    ast:    Box<ASTNode>,
+    ast: Box<ASTNode>,
 }
 
 impl ASTFun {
@@ -43,6 +44,7 @@ impl ASTFun {
                 "&sig1".to_string(),
                 "&sig2".to_string(),
                 "&state".to_string(),
+                "&fstate".to_string(),
             ],
             locals: vec![], // vec!["x".to_string(), "y".to_string()],
             ast,
@@ -57,32 +59,32 @@ pub enum ASTNode {
     Assign(String, Box<ASTNode>),
     BinOp(ASTBinOp, Box<ASTNode>, Box<ASTNode>),
     If(Box<ASTNode>, Box<ASTNode>, Option<Box<ASTNode>>),
-    Call(String, Box<ASTNode>),
+    Call(String, usize, Box<ASTNode>),
     Stmts(Vec<Box<ASTNode>>),
 }
 
 impl ASTNode {
     pub fn to_string(&self) -> String {
         match self {
-            ASTNode::Lit(v)          => format!("lit:{:6.4}", v),
-            ASTNode::Var(v)          => format!("var:{}",     v),
-            ASTNode::Assign(v, _)    => format!("assign:{}",  v),
+            ASTNode::Lit(v) => format!("lit:{:6.4}", v),
+            ASTNode::Var(v) => format!("var:{}", v),
+            ASTNode::Assign(v, _) => format!("assign:{}", v),
             ASTNode::BinOp(op, _, _) => format!("binop:{:?}", op),
-            ASTNode::If(_, _, _)     => format!("if"),
-            ASTNode::Call(fun, _)    => format!("call1:{}", fun),
-            ASTNode::Stmts(stmts)    => format!("stmts:{}", stmts.len()),
+            ASTNode::If(_, _, _) => format!("if"),
+            ASTNode::Call(fun, fs, _) => format!("call{}:{}", fs, fun),
+            ASTNode::Stmts(stmts) => format!("stmts:{}", stmts.len()),
         }
     }
 
     pub fn typ_str(&self) -> &str {
         match self {
-            ASTNode::Lit(v)          => "lit",
-            ASTNode::Var(v)          => "var",
-            ASTNode::Assign(v, _)    => "assign",
+            ASTNode::Lit(v) => "lit",
+            ASTNode::Var(v) => "var",
+            ASTNode::Assign(v, _) => "assign",
             ASTNode::BinOp(op, _, _) => "binop",
-            ASTNode::If(_, _, _)     => "if",
-            ASTNode::Call(fun, _)    => "call1",
-            ASTNode::Stmts(stmts)    => "stmts",
+            ASTNode::If(_, _, _) => "if",
+            ASTNode::Call(fun, _, _) => "call",
+            ASTNode::Stmts(stmts) => "stmts",
         }
     }
 
@@ -91,28 +93,30 @@ impl ASTNode {
         let mut s = indent_str + &self.to_string() + "\n";
 
         match self {
-            ASTNode::Lit(_)         => (),
-            ASTNode::Var(_)         => (),
-            ASTNode::Assign(_, e)   => { s += &e.dump(indent + 1); },
+            ASTNode::Lit(_) => (),
+            ASTNode::Var(_) => (),
+            ASTNode::Assign(_, e) => {
+                s += &e.dump(indent + 1);
+            }
             ASTNode::BinOp(_, a, b) => {
                 s += &a.dump(indent + 1);
                 s += &b.dump(indent + 1);
-            },
+            }
             ASTNode::If(c, a, b) => {
                 s += &c.dump(indent + 1);
                 s += &a.dump(indent + 1);
                 if let Some(n) = b {
                     s += &n.dump(indent + 1);
                 }
-            },
-            ASTNode::Call(_, a) => {
+            }
+            ASTNode::Call(_, _, a) => {
                 s += &a.dump(indent + 1);
-            },
+            }
             ASTNode::Stmts(stmts) => {
                 for n in stmts {
                     s += &n.dump(indent + 1);
                 }
-            },
+            }
         }
 
         s
@@ -152,6 +156,7 @@ impl Default for JIT {
             .unwrap();
         let mut builder = JITBuilder::with_isa(isa, default_libcall_names());
         builder.symbol("test", test as *const u8);
+        builder.symbol("sin", std::primitive::f64::sin as *const u8);
 
         let module = JITModule::new(builder);
         Self {
@@ -198,35 +203,29 @@ impl JIT {
         Ok(code)
     }
 
-//    /// Create a zero-initialized data section.
-//    pub fn create_data(&mut self, name: &str, contents: Vec<u8>) -> Result<&[u8], String> {
-//        // The steps here are analogous to `compile`, except that data is much
-//        // simpler than functions.
-//        self.data_ctx.define(contents.into_boxed_slice());
-//        let id = self
-//            .module
-//            .declare_data(name, Linkage::Export, true, false)
-//            .map_err(|e| e.to_string())?;
-//
-//        self.module
-//            .define_data(id, &self.data_ctx)
-//            .map_err(|e| e.to_string())?;
-//        self.data_ctx.clear();
-//        self.module.finalize_definitions();
-//        let buffer = self.module.get_finalized_data(id);
-//        // TODO: Can we move the unsafe into cranelift?
-//        Ok(unsafe { slice::from_raw_parts(buffer.0, buffer.1) })
-//    }
+    //    /// Create a zero-initialized data section.
+    //    pub fn create_data(&mut self, name: &str, contents: Vec<u8>) -> Result<&[u8], String> {
+    //        // The steps here are analogous to `compile`, except that data is much
+    //        // simpler than functions.
+    //        self.data_ctx.define(contents.into_boxed_slice());
+    //        let id = self
+    //            .module
+    //            .declare_data(name, Linkage::Export, true, false)
+    //            .map_err(|e| e.to_string())?;
+    //
+    //        self.module
+    //            .define_data(id, &self.data_ctx)
+    //            .map_err(|e| e.to_string())?;
+    //        self.data_ctx.clear();
+    //        self.module.finalize_definitions();
+    //        let buffer = self.module.get_finalized_data(id);
+    //        // TODO: Can we move the unsafe into cranelift?
+    //        Ok(unsafe { slice::from_raw_parts(buffer.0, buffer.1) })
+    //    }
 
     // Translate from toy-language AST nodes into Cranelift IR.
-    fn translate(
-        &mut self,
-        fun: ASTFun,
-    ) -> Result<(), String> {
-        let mut builder =
-            FunctionBuilder::new(
-                &mut self.ctx.func,
-                &mut self.builder_context);
+    fn translate(&mut self, fun: ASTFun) -> Result<(), String> {
+        let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
 
         let mut trans = FunctionTranslator::new(builder, &mut self.module);
         trans.register_functions();
@@ -235,39 +234,50 @@ impl JIT {
         ret
 
         // Now translate the statements of the function body.
-//        let mut trans = FunctionTranslator {
-//            int,
-//            builder,
-//            variables,
-//            module: &mut self.module,
-//        };
+        //        let mut trans = FunctionTranslator {
+        //            int,
+        //            builder,
+        //            variables,
+        //            module: &mut self.module,
+        //        };
 
-//        trans.translate_ast(fun.ast);
+        //        trans.translate_ast(fun.ast);
 
-//        // Set up the return variable of the function. Above, we declared a
-//        // variable to hold the return value. Here, we just do a use of that
-//        // variable.
-//        let return_variable = trans.variables.get(&the_return).unwrap();
-//        let return_value = trans.builder.use_var(*return_variable);
+        //        // Set up the return variable of the function. Above, we declared a
+        //        // variable to hold the return value. Here, we just do a use of that
+        //        // variable.
+        //        let return_variable = trans.variables.get(&the_return).unwrap();
+        //        let return_value = trans.builder.use_var(*return_variable);
     }
 
-//    pub fn translate_ast_node(&mut self, builder: FunctionBuilder<'a>, 
+    //    pub fn translate_ast_node(&mut self, builder: FunctionBuilder<'a>,
 }
 
 struct FunctionTranslator<'a> {
-    builder:    FunctionBuilder<'a>,
-    variables:  HashMap<String, Variable>,
-    var_index:  usize,
-    module:     &'a mut JITModule,
-    func:       Option<FuncId>,
+    builder: FunctionBuilder<'a>,
+    variables: HashMap<String, Variable>,
+    var_index: usize,
+    module: &'a mut JITModule,
+    func: Option<FuncId>,
+    func2: Option<FuncId>,
+    ptr_w: u32,
 }
 
 pub struct DSPState {
     pub x: f64,
+    pub y: f64,
 }
 
-pub fn test(x: f64, state: *mut DSPState) -> f64 {
-    unsafe { (*state).x = x * 22.0; };
+pub struct TSTState {
+    pub l: f64,
+}
+
+pub fn test(x: f64, state: *mut DSPState, mystate: *mut std::ffi::c_void) -> f64 {
+    unsafe {
+        let p = mystate as *mut TSTState;
+        (*state).x = x * 22.0;
+        (*state).y = (*p).l;
+    };
     x * 10000.0 + 1.0
 }
 
@@ -279,6 +289,8 @@ impl<'a> FunctionTranslator<'a> {
             builder,
             module,
             func: None,
+            func2: None,
+            ptr_w: 8,
         }
     }
 
@@ -292,21 +304,29 @@ impl<'a> FunctionTranslator<'a> {
         let mut sig = self.module.make_signature();
         sig.params.push(AbiParam::new(F64));
         sig.params.push(AbiParam::new(ptr_type));
+        sig.params.push(AbiParam::new(ptr_type));
         sig.returns.push(AbiParam::new(F64));
+
+        let mut sig2 = self.module.make_signature();
+        sig2.params.push(AbiParam::new(F64));
+        sig2.returns.push(AbiParam::new(F64));
 
         self.func = Some(
             self.module
-            .declare_function("test",
-                  cranelift_module::Linkage::Import, &sig)
-            .map_err(|e| e.to_string()).unwrap());
+                .declare_function("test", cranelift_module::Linkage::Import, &sig)
+                .map_err(|e| e.to_string())
+                .unwrap(),
+        );
+        self.func2 = Some(
+            self.module
+                .declare_function("sin", cranelift_module::Linkage::Import, &sig2)
+                .map_err(|e| e.to_string())
+                .unwrap(),
+        );
     }
 
     /// Declare a single variable declaration.
-    fn declare_variable(
-        &mut self,
-        typ:       types::Type,
-        name:      &str,
-    ) -> Variable {
+    fn declare_variable(&mut self, typ: types::Type, name: &str) -> Variable {
         let var = Variable::new(self.var_index);
         println!("DECLARE {} = {}", name, self.var_index);
 
@@ -321,9 +341,11 @@ impl<'a> FunctionTranslator<'a> {
 
     fn translate(&mut self, fun: ASTFun) -> Result<(), String> {
         let ptr_type = self.module.target_config().pointer_type();
+        self.ptr_w = ptr_type.bytes();
 
         let entry_block = self.builder.create_block();
-        self.builder.append_block_params_for_function_params(entry_block);
+        self.builder
+            .append_block_params_for_function_params(entry_block);
         self.builder.switch_to_block(entry_block);
         self.builder.seal_block(entry_block);
 
@@ -332,12 +354,11 @@ impl<'a> FunctionTranslator<'a> {
         // declare and define parameters:
         for (i, param_name) in fun.params.iter().enumerate() {
             let val = self.builder.block_params(entry_block)[i];
-            let var =
-                if param_name.chars().next() == Some('&') {
-                    self.declare_variable(ptr_type, param_name)
-                } else {
-                    self.declare_variable(F64, param_name)
-                };
+            let var = if param_name.chars().next() == Some('&') {
+                self.declare_variable(ptr_type, param_name)
+            } else {
+                self.declare_variable(F64, param_name)
+            };
             println!("DEF VAR: {}", param_name);
             self.builder.def_var(var, val);
         }
@@ -348,7 +369,6 @@ impl<'a> FunctionTranslator<'a> {
             let var = self.declare_variable(F64, local_name);
             self.builder.def_var(var, zero);
         }
-
 
         self.compile(&fun.ast);
 
@@ -364,59 +384,74 @@ impl<'a> FunctionTranslator<'a> {
         let ptr_type = self.module.target_config().pointer_type();
 
         match ast.as_ref() {
-            ASTNode::Lit(v) => {
-                self.builder.ins().f64const(*v)
-            },
+            ASTNode::Lit(v) => self.builder.ins().f64const(*v),
             ASTNode::Var(name) => {
                 let variable = self.variables.get(name).unwrap();
 
                 if name.chars().next() == Some('&') {
                     let ptr = self.builder.use_var(*variable);
-                    self.builder.ins().load(
-                        F64, MemFlags::new(), ptr, 0)
+                    self.builder.ins().load(F64, MemFlags::new(), ptr, 0)
                 } else {
                     self.builder.use_var(*variable)
                 }
-            },
+            }
             ASTNode::Assign(name, ast) => {
-                let value    = self.compile(ast);
+                let value = self.compile(ast);
                 let variable = self.variables.get(name).unwrap();
 
                 if name.chars().next() == Some('&') {
                     let ptr = self.builder.use_var(*variable);
-                    self.builder.ins().store(
-                        MemFlags::new(), value, ptr, 0);
+                    self.builder.ins().store(MemFlags::new(), value, ptr, 0);
                 } else {
                     self.builder.def_var(*variable, value);
                 }
 
                 value
-            },
+            }
             ASTNode::BinOp(ASTBinOp::Add, a, b) => {
                 let value_a = self.compile(a);
                 let value_b = self.compile(b);
                 self.builder.ins().fadd(value_a, value_b)
-            },
-            ASTNode::Call(name, arg) => {
-                let state_var = self.variables.get("&state").unwrap();
-                let ptr = self.builder.use_var(*state_var);
-//                let state_value =
-//                    self.builder.ins().load(I64, MemFlags::new(), ptr, 0);
-
+            }
+            ASTNode::Call(name, fstate_index, arg) => {
                 let value_arg = self.compile(arg);
-                let local_callee =
-                    self.module
-                    .declare_func_in_func(
-                        self.func.unwrap(), &mut self.builder.func);
-                let call = self.builder.ins().call(local_callee, &[value_arg, ptr]);
-                self.builder.inst_results(call)[0]
-            },
+                if name == "test" {
+                    let ptr_type = self.module.target_config().pointer_type();
+                    let state_var = self.variables.get("&state").unwrap();
+                    let ptr = self.builder.use_var(*state_var);
+
+                    let fstate_var = self.variables.get("&fstate").unwrap();
+                    let fptr = self.builder.use_var(*fstate_var);
+                    let func_state = self.builder.ins().load(
+                        ptr_type,
+                        MemFlags::new(),
+                        fptr,
+                        Offset32::new(*fstate_index as i32 * self.ptr_w as i32),
+                    );
+
+                    let local_callee = self
+                        .module
+                        .declare_func_in_func(self.func.unwrap(), &mut self.builder.func);
+                    let call = self
+                        .builder
+                        .ins()
+                        .call(local_callee, &[value_arg, ptr, func_state]);
+                    self.builder.inst_results(call)[0]
+                } else {
+                    let local_callee = self
+                        .module
+                        .declare_func_in_func(self.func2.unwrap(), &mut self.builder.func);
+                    let call = self.builder.ins().call(local_callee, &[value_arg]);
+                    self.builder.inst_results(call)[0]
+                }
+            }
             ASTNode::If(cond, then, els) => {
                 let res = self.compile(cond);
                 let cmpv = self.builder.ins().f64const(0.5);
                 let condition_value =
-                    self.builder.ins().fcmp(
-                        FloatCC::GreaterThanOrEqual, res, cmpv);
+                    self.builder
+                        .ins()
+                        .fcmp(FloatCC::GreaterThanOrEqual, res, cmpv);
 
                 let then_block = self.builder.create_block();
                 let else_block = self.builder.create_block();
@@ -443,12 +478,11 @@ impl<'a> FunctionTranslator<'a> {
 
                 self.builder.switch_to_block(else_block);
                 self.builder.seal_block(else_block);
-                let else_return =
-                    if let Some(els) = els {
-                        self.compile(els)
-                    } else {
-                        self.builder.ins().f64const(0.0)
-                    };
+                let else_return = if let Some(els) = els {
+                    self.compile(els)
+                } else {
+                    self.builder.ins().f64const(0.0)
+                };
 
                 // Jump to the merge block, passing it the block return value.
                 self.builder.ins().jump(merge_block, &[else_return]);
@@ -464,16 +498,25 @@ impl<'a> FunctionTranslator<'a> {
                 let phi = self.builder.block_params(merge_block)[0];
 
                 phi
-            },
-            _ => {
-                self.builder.ins().f64const(42.23)
-            },
-//    ASTNode::Lit(f64),
-//    ASTNode::Var(String),
-//    ASTNode::Assign(String),
-//    ASTNode::BinOp(ASTBinOp, Box<ASTNode>, Box<ASTNode>),
-//    ASTNode::If(Box<ASTNode>, Box<ASTNode>, Option<Box<ASTNode>>),
-//    ASTNode::Stmts(Vec<Box<ASTNode>>),
+            }
+            ASTNode::Stmts(stmts) => {
+                let mut value = None;
+                for ast in stmts {
+                    value = Some(self.compile(ast));
+                }
+                if let Some(value) = value {
+                    value
+                } else {
+                    self.builder.ins().f64const(0.0)
+                }
+            }
+            _ => self.builder.ins().f64const(42.23),
+            //    ASTNode::Lit(f64),
+            //    ASTNode::Var(String),
+            //    ASTNode::Assign(String),
+            //    ASTNode::BinOp(ASTBinOp, Box<ASTNode>, Box<ASTNode>),
+            //    ASTNode::If(Box<ASTNode>, Box<ASTNode>, Option<Box<ASTNode>>),
+            //    ASTNode::Stmts(Vec<Box<ASTNode>>),
         }
     }
 }
