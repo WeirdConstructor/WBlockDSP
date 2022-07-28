@@ -361,8 +361,20 @@ pub struct DSPFunction {
     func_state_types: Vec<Rc<dyn DSPNodeType>>,
     func_states: Vec<*mut u8>,
     func_state_init_reset: Vec<usize>,
-    function:
-        fn(f64, f64, f64, f64, f64, f64, *mut f64, *mut f64, *mut DSPState, *mut *mut u8) -> f64,
+    function: fn(
+        f64,
+        f64,
+        f64,
+        f64,
+        f64,
+        f64,
+        f64,
+        f64,
+        *mut f64,
+        *mut f64,
+        *mut DSPState,
+        *mut *mut u8,
+    ) -> f64,
 }
 
 impl DSPFunction {
@@ -376,6 +388,8 @@ impl DSPFunction {
                 mem::transmute::<
                     _,
                     fn(
+                        f64,
+                        f64,
                         f64,
                         f64,
                         f64,
@@ -403,6 +417,8 @@ impl DSPFunction {
                     f64,
                     f64,
                     f64,
+                    f64,
+                    f64,
                     *mut f64,
                     *mut f64,
                     *mut DSPState,
@@ -412,7 +428,11 @@ impl DSPFunction {
         };
     }
 
-    pub fn init(&mut self) {
+    pub fn init(&mut self, srate: f64) {
+        unsafe {
+            (*self.state).srate = srate;
+        }
+
         for idx in self.func_state_init_reset.iter() {
             let typ = &self.func_state_types[*idx];
             let ptr = self.func_states[*idx];
@@ -444,8 +464,14 @@ impl DSPFunction {
         sig1: &mut f64,
         sig2: &mut f64,
     ) -> f64 {
+        let (srate, israte) = unsafe {
+            // TODO: Store israte to save a division!
+            ((*self.state).srate, (*self.state).srate)
+        };
         let states_ptr: *mut *mut u8 = self.func_states.as_mut_ptr();
-        (self.function)(in1, in2, alpha, beta, delta, gamma, sig1, sig2, self.state, states_ptr)
+        (self.function)(
+            in1, in2, alpha, beta, delta, gamma, srate, israte, sig1, sig2, self.state, states_ptr,
+        )
     }
 }
 

@@ -33,6 +33,8 @@ impl ASTFun {
                 "beta".to_string(),
                 "delta".to_string(),
                 "gamma".to_string(),
+                "srate".to_string(),
+                "israte".to_string(),
                 "&sig1".to_string(),
                 "&sig2".to_string(),
                 "&state".to_string(),
