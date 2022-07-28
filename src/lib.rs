@@ -6,8 +6,10 @@ use wlambda::*;
 mod jit;
 mod block_view;
 mod block_lang;
+mod ast;
 pub mod wlapi;
 
+pub use ast::*;
 pub use block_view::*;
 pub use block_lang::*;
 

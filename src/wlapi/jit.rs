@@ -2,7 +2,7 @@
 // This file is a part of WBlockDSP. Released under GPL-3.0-or-later.
 // See README.md and COPYING for details.
 
-use crate::jit::{ASTBinOp, ASTNode};
+use crate::ast::{ASTBinOp, ASTNode};
 
 use crate::arg_chk;
 use wlambda::*;

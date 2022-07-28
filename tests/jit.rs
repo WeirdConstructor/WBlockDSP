@@ -250,6 +250,8 @@ fn check_jit_wlambda() {
     let ret = run_ast(vv2ast_node(ast.clone()).unwrap(), 20.21, 3.4);
     assert_float_eq!(ret.2, 1.2);
 
-    let ret = run_ast(vv2ast_node(ast.clone()).unwrap(), 2.21, 3.4);
+    for i in 0..10000 {
+        let ret = run_ast(vv2ast_node(ast.clone()).unwrap(), 2.21, 3.4);
+    }
     assert_float_eq!(ret.2, 3.4);
 }

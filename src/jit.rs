@@ -1,3 +1,8 @@
+// Copyright (c) 2021-2022 Weird Constructor <weirdconstructor@gmail.com>
+// This file is a part of WBlockDSP. Released under GPL-3.0-or-later.
+// See README.md and COPYING for details.
+
+use crate::ast::*;
 use cranelift::prelude::types::{F64, I32};
 use cranelift::prelude::InstBuilder;
 use cranelift::prelude::*;
@@ -11,119 +16,6 @@ use std::collections::HashMap;
 use std::mem;
 use std::rc::Rc;
 use std::slice;
-
-#[derive(Debug, Clone, Copy)]
-pub enum ASTBinOp {
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Eq,
-    Ne,
-    Lt,
-    Le,
-    Gt,
-    Ge,
-}
-
-#[derive(Debug, Clone)]
-pub struct ASTFun {
-    params: Vec<String>,
-    locals: Vec<String>,
-    ast: Box<ASTNode>,
-}
-
-impl ASTFun {
-    pub fn new(ast: Box<ASTNode>) -> Self {
-        Self {
-            params: vec![
-                "in1".to_string(),
-                "in2".to_string(),
-                "alpha".to_string(),
-                "beta".to_string(),
-                "delta".to_string(),
-                "gamma".to_string(),
-                "&sig1".to_string(),
-                "&sig2".to_string(),
-                "&state".to_string(),
-                "&fstate".to_string(),
-            ],
-            locals: vec![], // vec!["x".to_string(), "y".to_string()],
-            ast,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum ASTNode {
-    Lit(f64),
-    Var(String),
-    Assign(String, Box<ASTNode>),
-    BinOp(ASTBinOp, Box<ASTNode>, Box<ASTNode>),
-    If(Box<ASTNode>, Box<ASTNode>, Option<Box<ASTNode>>),
-    Call(String, usize, Box<ASTNode>),
-    Stmts(Vec<Box<ASTNode>>),
-}
-
-impl ASTNode {
-    pub fn to_string(&self) -> String {
-        match self {
-            ASTNode::Lit(v) => format!("lit:{:6.4}", v),
-            ASTNode::Var(v) => format!("var:{}", v),
-            ASTNode::Assign(v, _) => format!("assign:{}", v),
-            ASTNode::BinOp(op, _, _) => format!("binop:{:?}", op),
-            ASTNode::If(_, _, _) => format!("if"),
-            ASTNode::Call(fun, fs, _) => format!("call{}:{}", fs, fun),
-            ASTNode::Stmts(stmts) => format!("stmts:{}", stmts.len()),
-        }
-    }
-
-    pub fn typ_str(&self) -> &str {
-        match self {
-            ASTNode::Lit(v) => "lit",
-            ASTNode::Var(v) => "var",
-            ASTNode::Assign(v, _) => "assign",
-            ASTNode::BinOp(op, _, _) => "binop",
-            ASTNode::If(_, _, _) => "if",
-            ASTNode::Call(fun, _, _) => "call",
-            ASTNode::Stmts(stmts) => "stmts",
-        }
-    }
-
-    pub fn dump(&self, indent: usize) -> String {
-        let indent_str = "   ".repeat(indent + 1);
-        let mut s = indent_str + &self.to_string() + "\n";
-
-        match self {
-            ASTNode::Lit(_) => (),
-            ASTNode::Var(_) => (),
-            ASTNode::Assign(_, e) => {
-                s += &e.dump(indent + 1);
-            }
-            ASTNode::BinOp(_, a, b) => {
-                s += &a.dump(indent + 1);
-                s += &b.dump(indent + 1);
-            }
-            ASTNode::If(c, a, b) => {
-                s += &c.dump(indent + 1);
-                s += &a.dump(indent + 1);
-                if let Some(n) = b {
-                    s += &n.dump(indent + 1);
-                }
-            }
-            ASTNode::Call(_, _, a) => {
-                s += &a.dump(indent + 1);
-            }
-            ASTNode::Stmts(stmts) => {
-                for n in stmts {
-                    s += &n.dump(indent + 1);
-                }
-            }
-        }
-
-        s
-    }
-}
 
 /// The basic JIT class.
 pub struct JIT {
@@ -141,7 +33,7 @@ pub struct JIT {
 
     /// The module, with the jit backend, which manages the JIT'd
     /// functions.
-    module: JITModule,
+    module: Option<JITModule>,
 }
 
 impl Default for JIT {
@@ -165,7 +57,7 @@ impl Default for JIT {
             builder_context: FunctionBuilderContext::new(),
             ctx: module.make_context(),
             data_ctx: DataContext::new(),
-            module,
+            module: Some(module),
         }
     }
 }
@@ -173,10 +65,11 @@ impl Default for JIT {
 impl JIT {
     /// Compile a string in the toy language into machine code.
     pub fn compile(&mut self, prog: ASTFun) -> Result<*const u8, String> {
-        let ptr_type = self.module.target_config().pointer_type();
+        let module = self.module.as_mut().expect("Module still loaded");
+        let ptr_type = module.target_config().pointer_type();
 
-        for param_name in &prog.params {
-            if param_name.chars().next() == Some('&') {
+        for param_idx in 0..prog.param_count() {
+            if prog.param_is_ref(param_idx) {
                 self.ctx.func.signature.params.push(AbiParam::new(ptr_type));
             } else {
                 self.ctx.func.signature.params.push(AbiParam::new(F64));
@@ -185,8 +78,7 @@ impl JIT {
 
         self.ctx.func.signature.returns.push(AbiParam::new(F64));
 
-        let id = self
-            .module
+        let id = module
             .declare_function("dsp", Linkage::Export, &self.ctx.func.signature)
             .map_err(|e| e.to_string())?;
 
@@ -195,14 +87,15 @@ impl JIT {
         // Then, translate the AST nodes into Cranelift IR.
         self.translate(prog)?;
 
-        self.module
+        let module = self.module.as_mut().expect("Module still loaded");
+        module
             .define_function(id, &mut self.ctx)
             .map_err(|e| e.to_string())?;
 
-        self.module.clear_context(&mut self.ctx);
-        self.module.finalize_definitions();
+        module.clear_context(&mut self.ctx);
+        module.finalize_definitions();
 
-        let code = self.module.get_finalized_function(id);
+        let code = module.get_finalized_function(id);
 
         Ok(code)
     }
@@ -231,33 +124,28 @@ impl JIT {
     fn translate(&mut self, fun: ASTFun) -> Result<(), String> {
         let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
 
-        let mut trans = FunctionTranslator::new(builder, &mut self.module);
+        let module = self.module.as_mut().expect("Module still loaded");
+        let mut trans = DSPFunctionTranslator::new(builder, module);
         trans.register_functions();
-
         let ret = trans.translate(fun);
+        //d// println!("{}", trans.builder.func.display());
         ret
-
-        // Now translate the statements of the function body.
-        //        let mut trans = FunctionTranslator {
-        //            int,
-        //            builder,
-        //            variables,
-        //            module: &mut self.module,
-        //        };
-
-        //        trans.translate_ast(fun.ast);
-
-        //        // Set up the return variable of the function. Above, we declared a
-        //        // variable to hold the return value. Here, we just do a use of that
-        //        // variable.
-        //        let return_variable = trans.variables.get(&the_return).unwrap();
-        //        let return_value = trans.builder.use_var(*return_variable);
     }
 
     //    pub fn translate_ast_node(&mut self, builder: FunctionBuilder<'a>,
 }
 
-struct FunctionTranslator<'a> {
+impl Drop for JIT {
+    fn drop(&mut self) {
+        unsafe {
+            if let Some(module) = self.module.take() {
+                module.free_memory();
+            }
+        };
+    }
+}
+
+struct DSPFunctionTranslator<'a> {
     builder: FunctionBuilder<'a>,
     variables: HashMap<String, Variable>,
     var_index: usize,
@@ -291,64 +179,165 @@ pub fn test(x: f64, state: *mut DSPState, mystate: *mut std::ffi::c_void) -> f64
     x * 10000.0 + 1.0
 }
 
+/// Encodes the type of state that a DSP node requires.
+///
+/// See also [DSPNodeState] and [DSPNodeStateCollection].
 #[derive(Debug, Clone, Copy)]
-pub enum FuncType {
+pub enum NodeStateType {
     Test,
 }
 
-impl FuncType {
+impl NodeStateType {
+    /// Allocates a new piece of DSP node state.
+    ///
+    /// Used by [DSPNodeState] to construct and destruct DSP node state.
+    ///
+    /// Attention: You must properly free the returned pointer! It will not be
+    /// automatically freed for you. You have to call [NodeStateType::deallocate]
+    /// with the pointer that was returned from here.
     pub fn alloc_new_state(&self) -> *mut u8 {
         match self {
-            FuncType::Test => Box::into_raw(Box::new(TSTState::new())) as *mut u8,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct FunctionState {
-    func_type: FuncType,
-    ptr: *mut u8,
-    generation: u64,
-}
-
-impl FunctionState {
-    pub fn new(func_type: FuncType) -> Self {
-        Self {
-            func_type,
-            ptr: func_type.alloc_new_state(),
-            generation: 0,
+            NodeStateType::Test => Box::into_raw(Box::new(TSTState::new())) as *mut u8,
         }
     }
 
-    pub fn mark(&mut self, gen: u64) {
-        self.generation = gen;
-    }
-}
-
-impl Drop for FunctionState {
-    fn drop(&mut self) {
-        match self.func_type {
-            FuncType::Test => {
-                unsafe { Box::from_raw(self.ptr) };
-                self.ptr = std::ptr::null_mut();
+    /// Frees a pointer returned from [NodeStateType::alloc_new_state].
+    pub fn deallocate(&self, ptr: *mut u8) {
+        match self {
+            NodeStateType::Test => {
+                unsafe { Box::from_raw(ptr) };
             }
         }
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct FunctionStateTable {
-    state: *mut DSPState,
-    func_states: HashMap<u64, Rc<RefCell<FunctionState>>>,
+/// A handle to manage the state of a DSP node
+/// that was created while the [DSPFunctionTranslator] compiled the given AST
+/// to machine code.
+///
+/// It holds a pointer to the state of a single DSP node. The internal state
+/// pointer will be shared with the execution thread that will execute the
+/// complete DSP function/graph.
+///
+/// You will not have to allocate and manage this manually, see also [DSPNodeStateCollection].
+#[derive(Debug)]
+pub struct DSPNodeState {
+    /// Holds the type of this piece of state.
+    func_type: NodeStateType,
+    /// A pointer to the allocated piece of state. It will be shared
+    /// with the execution thread. So you must not touch the data that is referenced
+    /// here.
+    ptr: *mut u8,
+    /// A generation counter that is used by [DSPNodeStateTable] to determine
+    /// if a piece of state is not used anymore.
     generation: u64,
+    /// The current index into the most recent [DSPNodeStateCollection] that was
+    /// constructed by [DSPNodeStateTable].
+    collection_index: usize,
+}
+
+impl DSPNodeState {
+    /// Creates a fresh piece of DSP node state.
+    pub fn new(func_type: NodeStateType) -> Self {
+        Self {
+            func_type,
+            ptr: func_type.alloc_new_state(),
+            generation: 0,
+            collection_index: 0,
+        }
+    }
+
+    /// Marks this piece of DSP state as used and deposits the
+    /// index into the current [DSPNodeStateCollection].
+    pub fn mark(&mut self, gen: u64, index: usize) {
+        self.generation = gen;
+        self.collection_index = index;
+    }
+}
+
+impl Drop for DSPNodeState {
+    /// This should only be dropped when the [DSPNodeStateTable] determined
+    /// that the pointer that was shared with the execution thread is no longer
+    /// in use.
+    fn drop(&mut self) {
+        self.func_type.deallocate(self.ptr);
+        self.ptr = std::ptr::null_mut();
+    }
+}
+
+/// This table holds all the DSP state including the state of the individual DSP nodes
+/// that were created by the [DSPFunctionTranslator].
+#[derive(Debug)]
+pub struct DSPNodeStateTable {
+    /// The global DSP state that is passed to all stateful DSP nodes.
+    state: *mut DSPState,
+    func_states: HashMap<u64, Box<DSPNodeState>>,
+    generation: u64,
+}
+
+impl DSPNodeStateTable {
+    pub fn new() -> Self {
+        Self {
+            state: Box::into_raw(Box::new(DSPState { x: 0.0, y: 0.0 })),
+            func_states: HashMap::new(),
+            generation: 0,
+        }
+    }
+}
+
+impl Drop for DSPNodeStateTable {
+    fn drop(&mut self) {
+        unsafe { Box::from_raw(self.state) };
+        self.state = std::ptr::null_mut();
+    }
 }
 
 pub struct DSPFunction {
     state: *mut DSPState,
     func_states: Vec<*mut u8>,
+    function: Box<
+        Fn(
+            f64,
+            f64,
+            f64,
+            f64,
+            f64,
+            f64,
+            *mut f64,
+            *mut f64,
+            *mut DSPState,
+            *mut *mut std::ffi::c_void,
+        ) -> f64,
+    >,
 }
 
-impl<'a> FunctionTranslator<'a> {
+impl DSPFunction {
+    pub fn new(state: *mut DSPState, function: *const u8) -> Self {
+        Self {
+            state,
+            func_states: vec![],
+            function: Box::new(unsafe {
+                mem::transmute::<
+                    _,
+                    fn(
+                        f64,
+                        f64,
+                        f64,
+                        f64,
+                        f64,
+                        f64,
+                        *mut f64,
+                        *mut f64,
+                        *mut DSPState,
+                        *mut *mut std::ffi::c_void,
+                    ) -> f64,
+                >(function)
+            }),
+        }
+    }
+}
+
+impl<'a> DSPFunctionTranslator<'a> {
     pub fn new(builder: FunctionBuilder<'a>, module: &'a mut JITModule) -> Self {
         Self {
             var_index: 0,
@@ -395,7 +384,7 @@ impl<'a> FunctionTranslator<'a> {
     /// Declare a single variable declaration.
     fn declare_variable(&mut self, typ: types::Type, name: &str) -> Variable {
         let var = Variable::new(self.var_index);
-        println!("DECLARE {} = {}", name, self.var_index);
+        //d// println!("DECLARE {} = {}", name, self.var_index);
 
         if !self.variables.contains_key(name) {
             self.variables.insert(name.into(), var);
@@ -419,30 +408,31 @@ impl<'a> FunctionTranslator<'a> {
         self.variables.clear();
 
         // declare and define parameters:
-        for (i, param_name) in fun.params.iter().enumerate() {
-            let val = self.builder.block_params(entry_block)[i];
-            let var = if param_name.chars().next() == Some('&') {
+        for param_idx in 0..fun.param_count() {
+            let val = self.builder.block_params(entry_block)[param_idx];
+
+            let param_name = fun.param_name(param_idx).expect("Parameter name accessible here");
+            let var = if fun.param_is_ref(param_idx) {
                 self.declare_variable(ptr_type, param_name)
             } else {
                 self.declare_variable(F64, param_name)
             };
-            println!("DEF VAR: {}", param_name);
+
             self.builder.def_var(var, val);
         }
 
         // declare and define local variables:
-        for (i, local_name) in fun.locals.iter().enumerate() {
+        for (i, local_name) in fun.local_variables().iter().enumerate() {
+            println!("DECLARE LOCAL: {}", local_name);
             let zero = self.builder.ins().f64const(0.0);
             let var = self.declare_variable(F64, local_name);
             self.builder.def_var(var, zero);
         }
 
-        let v = self.compile(&fun.ast);
+        let v = self.compile(fun.ast_ref());
 
         self.builder.ins().return_(&[v]);
         self.builder.finalize();
-
-        println!("{}", self.builder.func.display());
 
         Ok(())
     }
@@ -671,7 +661,7 @@ impl<'a> FunctionTranslator<'a> {
 }
 
 //
-//impl<'a> FunctionTranslator<'a> {
+//impl<'a> DSPFunctionTranslator<'a> {
 //
 //
 //
