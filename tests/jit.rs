@@ -19,7 +19,7 @@ macro_rules! assert_float_eq {
 
 #[test]
 fn check_jit() {
-    let mut jit = JIT::default();
+    let mut jit = JIT::new(get_default_library());
 
     let ast = ASTNode::Assign(
         "&sig1".to_string(),
@@ -84,7 +84,7 @@ fn check_jit() {
 
 #[test]
 fn check_jit_stmts() {
-    let mut jit = JIT::default();
+    let mut jit = JIT::new(get_default_library());
 
     let ast = ASTNode::Stmts(vec![
         Box::new(ASTNode::Assign(
@@ -138,7 +138,7 @@ fn check_jit_stmts() {
 }
 
 fn run_ast(ast: Box<ASTNode>, in1: f64, in2: f64) -> (f64, f64, f64) {
-    let mut jit = JIT::default();
+    let mut jit = JIT::new(get_default_library());
     let fun = ASTFun::new(ast);
 
     let code = jit.compile(fun).unwrap();
@@ -180,7 +180,7 @@ fn run_ast(ast: Box<ASTNode>, in1: f64, in2: f64) -> (f64, f64, f64) {
 
 #[test]
 fn check_jit_sin() {
-    let mut jit = JIT::default();
+    let mut jit = JIT::new(get_default_library());
 
     let ast =
         ASTNode::Call(
@@ -250,8 +250,6 @@ fn check_jit_wlambda() {
     let ret = run_ast(vv2ast_node(ast.clone()).unwrap(), 20.21, 3.4);
     assert_float_eq!(ret.2, 1.2);
 
-    for i in 0..10000 {
-        let ret = run_ast(vv2ast_node(ast.clone()).unwrap(), 2.21, 3.4);
-    }
+    let ret = run_ast(vv2ast_node(ast.clone()).unwrap(), 2.21, 3.4);
     assert_float_eq!(ret.2, 3.4);
 }

@@ -34,10 +34,13 @@ pub struct JIT {
     /// The module, with the jit backend, which manages the JIT'd
     /// functions.
     module: Option<JITModule>,
+
+    /// The available DSP node types that an be called by the code.
+    dsp_lib: Rc<RefCell<DSPNodeTypeLibrary>>,
 }
 
-impl Default for JIT {
-    fn default() -> Self {
+impl JIT {
+    pub fn new(dsp_lib: Rc<RefCell<DSPNodeTypeLibrary>>) -> Self {
         let mut flag_builder = settings::builder();
         flag_builder.set("use_colocated_libcalls", "false").unwrap();
         // FIXME set back to true once the x64 backend supports it.
@@ -58,11 +61,10 @@ impl Default for JIT {
             ctx: module.make_context(),
             data_ctx: DataContext::new(),
             module: Some(module),
+            dsp_lib,
         }
     }
-}
 
-impl JIT {
     /// Compile a string in the toy language into machine code.
     pub fn compile(&mut self, prog: ASTFun) -> Result<*const u8, String> {
         let module = self.module.as_mut().expect("Module still loaded");
@@ -125,7 +127,9 @@ impl JIT {
         let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
 
         let module = self.module.as_mut().expect("Module still loaded");
-        let mut trans = DSPFunctionTranslator::new(builder, module);
+        let lib = self.dsp_lib.clone();
+        let lib = lib.borrow();
+        let mut trans = DSPFunctionTranslator::new(&*lib, builder, module);
         trans.register_functions();
         let ret = trans.translate(fun);
         //d// println!("{}", trans.builder.func.display());
@@ -145,7 +149,8 @@ impl Drop for JIT {
     }
 }
 
-struct DSPFunctionTranslator<'a> {
+struct DSPFunctionTranslator<'a, 'b> {
+    dsp_lib: &'b DSPNodeTypeLibrary,
     builder: FunctionBuilder<'a>,
     variables: HashMap<String, Variable>,
     var_index: usize,
@@ -160,23 +165,54 @@ pub struct DSPState {
     pub y: f64,
 }
 
-pub struct TSTState {
-    pub l: f64,
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DSPNodeSigBit {
+    Value,
+    DSPStatePtr,
+    NodeStatePtr,
 }
 
-impl TSTState {
-    pub fn new() -> Self {
-        Self { l: 0.0 }
+/// A trait that handles allocation and deallocation of the
+/// state that belongs to a DSPNodeType.
+trait DSPNodeType {
+    /// The name of this DSP node, by this name it can be called from
+    /// the [ASTFun].
+    fn name(&self) -> &str;
+
+    /// The function pointer that should be inserted.
+    fn function_ptr(&self) -> *const u8;
+
+    /// Should return the signature type for input parameter `i`.
+    fn signature(&self, i: usize) -> Option<DSPNodeSigBit> {
+        None
     }
-}
 
-pub fn test(x: f64, state: *mut DSPState, mystate: *mut std::ffi::c_void) -> f64 {
-    unsafe {
-        let p = mystate as *mut TSTState;
-        (*state).x = x * 22.0;
-        (*state).y = (*p).l;
-    };
-    x * 10000.0 + 1.0
+    /// Should return true if the function for [DSPNodeType::function_ptr]
+    /// returns something.
+    fn has_return_value(&self) -> bool;
+
+    /// Allocates a new piece of state for this [DSPNodeType].
+    /// Must be deallocated using [DSPNodeType::deallocate_state].
+    fn allocate_state(&self) -> Option<*mut u8> {
+        None
+    }
+
+    /// Deallocates the private state of this [DSPNodeType].
+    fn deallocate_state(&self, ptr: *mut u8) {}
+
+    /// Returns true if this DSPNodeType has some private state that should be passed as
+    /// argument (allocated using [DSPNodeType::allocate_state].
+    fn is_stateful(&self) -> bool {
+        let mut i = 0;
+        while let Some(sig) = self.signature(i) {
+            if sig == DSPNodeSigBit::NodeStatePtr {
+                return true;
+            }
+            i += 1;
+        }
+
+        false
+    }
 }
 
 /// Encodes the type of state that a DSP node requires.
@@ -220,28 +256,30 @@ impl NodeStateType {
 /// complete DSP function/graph.
 ///
 /// You will not have to allocate and manage this manually, see also [DSPNodeStateCollection].
-#[derive(Debug)]
 pub struct DSPNodeState {
     /// Holds the type of this piece of state.
-    func_type: NodeStateType,
+    node_type: Rc<RefCell<dyn DSPNodeType>>,
     /// A pointer to the allocated piece of state. It will be shared
     /// with the execution thread. So you must not touch the data that is referenced
     /// here.
     ptr: *mut u8,
-    /// A generation counter that is used by [DSPNodeStateTable] to determine
+    /// A generation counter that is used by [DSPNodeContext] to determine
     /// if a piece of state is not used anymore.
     generation: u64,
     /// The current index into the most recent [DSPNodeStateCollection] that was
-    /// constructed by [DSPNodeStateTable].
+    /// constructed by [DSPNodeContext].
     collection_index: usize,
 }
 
 impl DSPNodeState {
     /// Creates a fresh piece of DSP node state.
-    pub fn new(func_type: NodeStateType) -> Self {
+    pub fn new(node_type: Rc<RefCell<dyn DSPNodeType>>) -> Self {
         Self {
-            func_type,
-            ptr: func_type.alloc_new_state(),
+            node_type: node_type.clone(),
+            ptr: node_type
+                .borrow()
+                .allocate_state()
+                .expect("DSPNodeState created for stateful node type"),
             generation: 0,
             collection_index: 0,
         }
@@ -256,26 +294,48 @@ impl DSPNodeState {
 }
 
 impl Drop for DSPNodeState {
-    /// This should only be dropped when the [DSPNodeStateTable] determined
+    /// This should only be dropped when the [DSPNodeContext] determined
     /// that the pointer that was shared with the execution thread is no longer
     /// in use.
     fn drop(&mut self) {
-        self.func_type.deallocate(self.ptr);
+        self.node_type.borrow().deallocate_state(self.ptr);
         self.ptr = std::ptr::null_mut();
+    }
+}
+
+pub struct DSPNodeTypeLibrary {
+    types: Vec<Rc<RefCell<dyn DSPNodeType>>>,
+}
+
+impl DSPNodeTypeLibrary {
+    pub fn new() -> Self {
+        Self { types: vec![] }
+    }
+
+    pub fn add(&mut self, typ: Rc<RefCell<dyn DSPNodeType>>) {
+        self.types.push(typ);
+    }
+
+    pub fn for_each<F: FnMut(&dyn DSPNodeType)>(&self, mut f: F) {
+        for t in self.types.iter() {
+            f(&*t.borrow());
+        }
     }
 }
 
 /// This table holds all the DSP state including the state of the individual DSP nodes
 /// that were created by the [DSPFunctionTranslator].
-#[derive(Debug)]
-pub struct DSPNodeStateTable {
+pub struct DSPNodeContext {
     /// The global DSP state that is passed to all stateful DSP nodes.
     state: *mut DSPState,
+    /// A map of unique DSP node instances that need private state.
     func_states: HashMap<u64, Box<DSPNodeState>>,
+    /// A generation counter to determine whether some [DSPNodeState] instances in `func_states`
+    /// can be cleaned up.
     generation: u64,
 }
 
-impl DSPNodeStateTable {
+impl DSPNodeContext {
     pub fn new() -> Self {
         Self {
             state: Box::into_raw(Box::new(DSPState { x: 0.0, y: 0.0 })),
@@ -285,7 +345,7 @@ impl DSPNodeStateTable {
     }
 }
 
-impl Drop for DSPNodeStateTable {
+impl Drop for DSPNodeContext {
     fn drop(&mut self) {
         unsafe { Box::from_raw(self.state) };
         self.state = std::ptr::null_mut();
@@ -337,9 +397,14 @@ impl DSPFunction {
     }
 }
 
-impl<'a> DSPFunctionTranslator<'a> {
-    pub fn new(builder: FunctionBuilder<'a>, module: &'a mut JITModule) -> Self {
+impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
+    pub fn new(
+        dsp_lib: &'b DSPNodeTypeLibrary,
+        builder: FunctionBuilder<'a>,
+        module: &'a mut JITModule,
+    ) -> Self {
         Self {
+            dsp_lib,
             var_index: 0,
             variables: HashMap::new(),
             builder,
@@ -411,7 +476,9 @@ impl<'a> DSPFunctionTranslator<'a> {
         for param_idx in 0..fun.param_count() {
             let val = self.builder.block_params(entry_block)[param_idx];
 
-            let param_name = fun.param_name(param_idx).expect("Parameter name accessible here");
+            let param_name = fun
+                .param_name(param_idx)
+                .expect("Parameter name accessible here");
             let var = if fun.param_is_ref(param_idx) {
                 self.declare_variable(ptr_type, param_name)
             } else {
@@ -866,3 +933,88 @@ impl<'a> DSPFunctionTranslator<'a> {
 //        self.builder.ins().symbol_value(pointer, local_id)
 //    }
 //}
+
+pub struct TSTState {
+    pub l: f64,
+}
+
+impl TSTState {
+    pub fn new() -> Self {
+        Self { l: 0.0 }
+    }
+}
+
+pub fn test(x: f64, state: *mut DSPState, mystate: *mut std::ffi::c_void) -> f64 {
+    unsafe {
+        let p = mystate as *mut TSTState;
+        (*state).x = x * 22.0;
+        (*state).y = (*p).l;
+    };
+    x * 10000.0 + 1.0
+}
+
+#[derive(Default)]
+struct TestNodeType;
+
+impl DSPNodeType for TestNodeType {
+    fn name(&self) -> &str {
+        "test"
+    }
+    fn function_ptr(&self) -> *const u8 {
+        test as *const u8
+    }
+
+    fn signature(&self, i: usize) -> Option<DSPNodeSigBit> {
+        match i {
+            0 => Some(DSPNodeSigBit::Value),
+            1 => Some(DSPNodeSigBit::DSPStatePtr),
+            2 => Some(DSPNodeSigBit::NodeStatePtr),
+            _ => None,
+        }
+    }
+
+    fn has_return_value(&self) -> bool {
+        true
+    }
+
+    fn allocate_state(&self) -> Option<*mut u8> {
+        Some(unsafe { Box::into_raw(Box::new(TSTState { l: 0.0 })) } as *mut u8)
+    }
+
+    fn deallocate_state(&self, ptr: *mut u8) {
+        unsafe { Box::from_raw(ptr as *mut TSTState) };
+    }
+}
+
+#[derive(Default)]
+struct SinNodeType;
+
+impl DSPNodeType for SinNodeType {
+    fn name(&self) -> &str {
+        "sin"
+    }
+
+    fn function_ptr(&self) -> *const u8 {
+        std::primitive::f64::sin as *const u8
+    }
+
+    fn signature(&self, i: usize) -> Option<DSPNodeSigBit> {
+        match i {
+            0 => Some(DSPNodeSigBit::Value),
+            _ => None,
+        }
+    }
+
+    fn has_return_value(&self) -> bool {
+        true
+    }
+}
+
+pub fn get_default_library() -> Rc<RefCell<DSPNodeTypeLibrary>> {
+    let lib = Rc::new(RefCell::new(DSPNodeTypeLibrary::new()));
+    lib.borrow_mut()
+        .add(Rc::new(RefCell::new(TestNodeType::default())));
+    lib.borrow_mut()
+        .add(Rc::new(RefCell::new(SinNodeType::default())));
+    lib
+}
