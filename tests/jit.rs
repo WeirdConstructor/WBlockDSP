@@ -1,5 +1,6 @@
 use std::mem;
 use wblockdsp::*;
+use wblockdsp::wlapi::vv2ast_node;
 use wlambda::*;
 
 #[macro_export]
@@ -136,6 +137,47 @@ fn check_jit_stmts() {
     assert_float_eq!(s2, 1.1);
 }
 
+fn run_ast(ast: Box<ASTNode>, in1: f64, in2: f64) -> (f64, f64, f64) {
+    let mut jit = JIT::default();
+    let fun = ASTFun::new(ast);
+
+    let code = jit.compile(fun).unwrap();
+    let ptr_b = unsafe {
+        mem::transmute::<
+            _,
+            fn(
+                f64,
+                f64,
+                f64,
+                f64,
+                f64,
+                f64,
+                *mut f64,
+                *mut f64,
+                *mut DSPState,
+                *mut *mut std::ffi::c_void,
+            ) -> f64,
+        >(code)
+    };
+
+    let mut s1 = 0.0;
+    let mut s2 = 0.0;
+    let mut state = DSPState { x: 0.0, y: 1.0 };
+    let res1 = ptr_b(
+        in1,
+        in2,
+        3.0,
+        4.0,
+        5.0,
+        6.0,
+        &mut s1,
+        &mut s2,
+        &mut state,
+        std::ptr::null_mut() as *mut *mut std::ffi::c_void,
+    );
+    (s1, s2, res1)
+}
+
 #[test]
 fn check_jit_sin() {
     let mut jit = JIT::default();
@@ -199,6 +241,21 @@ fn check_jit_wlambda() {
     !assign2 = jit:node $[:assign, var, 10.0];
     */
 
-    let res_add: VVal = ctx.eval("!@import jit; jit:node 10").unwrap();
-    assert_eq!(res_add.s(), "$<JIT::ASTNode:\"lit:10.0000\">");
+    let ast: VVal =
+        ctx.eval(r#"
+            !@import jit;
+            !n = jit:node $[:if,
+                $[:binop, :gt, "in1", 10],
+                1.2,
+                "in2"
+            ];
+            std:displayln "AAAAA" n.dump[];
+            n
+        "#).unwrap();
+    assert_eq!(ast.s(), "$<JIT::ASTNode:if>");
+    let ret = run_ast(vv2ast_node(ast.clone()).unwrap(), 20.21, 3.4);
+    assert_float_eq!(ret.2, 1.2);
+
+    let ret = run_ast(vv2ast_node(ast.clone()).unwrap(), 2.21, 3.4);
+    assert_float_eq!(ret.2, 3.4);
 }

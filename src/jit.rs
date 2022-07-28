@@ -1,4 +1,4 @@
-use cranelift::prelude::types::F64;
+use cranelift::prelude::types::{F64, I32};
 use cranelift::prelude::InstBuilder;
 use cranelift::prelude::*;
 use cranelift_codegen::ir::immediates::Offset32;
@@ -180,6 +180,8 @@ impl JIT {
                 self.ctx.func.signature.params.push(AbiParam::new(F64));
             };
         }
+
+        self.ctx.func.signature.returns.push(AbiParam::new(F64));
 
         let id = self
             .module
@@ -370,14 +372,19 @@ impl<'a> FunctionTranslator<'a> {
             self.builder.def_var(var, zero);
         }
 
-        self.compile(&fun.ast);
+        let v = self.compile(&fun.ast);
 
-        self.builder.ins().return_(&[]);
+        self.builder.ins().return_(&[v]);
         self.builder.finalize();
 
         println!("{}", self.builder.func.display());
 
         Ok(())
+    }
+
+    fn ins_b_to_f64(&mut self, v: Value) -> Value {
+        let bint = self.builder.ins().bint(I32, v);
+        self.builder.ins().fcvt_from_uint(F64, bint)
     }
 
     fn compile(&mut self, ast: &Box<ASTNode>) -> Value {
@@ -408,10 +415,51 @@ impl<'a> FunctionTranslator<'a> {
 
                 value
             }
-            ASTNode::BinOp(ASTBinOp::Add, a, b) => {
+            ASTNode::BinOp(op, a, b) => {
                 let value_a = self.compile(a);
                 let value_b = self.compile(b);
-                self.builder.ins().fadd(value_a, value_b)
+                match op {
+                    ASTBinOp::Add => self.builder.ins().fadd(value_a, value_b),
+                    ASTBinOp::Sub => self.builder.ins().fsub(value_a, value_b),
+                    ASTBinOp::Mul => self.builder.ins().fmul(value_a, value_b),
+                    ASTBinOp::Div => self.builder.ins().fdiv(value_a, value_b),
+                    ASTBinOp::Div => self.builder.ins().fdiv(value_a, value_b),
+                    ASTBinOp::Eq => {
+                        let cmp_res = self.builder.ins().fcmp(FloatCC::Equal, value_a, value_b);
+                        self.ins_b_to_f64(cmp_res)
+                    }
+                    ASTBinOp::Ne => {
+                        let cmp_res = self.builder.ins().fcmp(FloatCC::Equal, value_a, value_b);
+                        let bnot = self.builder.ins().bnot(cmp_res);
+                        let bint = self.builder.ins().bint(I32, bnot);
+                        self.builder.ins().fcvt_from_uint(F64, bint)
+                    }
+                    ASTBinOp::Ge => {
+                        let cmp_res =
+                            self.builder
+                                .ins()
+                                .fcmp(FloatCC::GreaterThanOrEqual, value_a, value_b);
+                        self.ins_b_to_f64(cmp_res)
+                    }
+                    ASTBinOp::Le => {
+                        let cmp_res =
+                            self.builder
+                                .ins()
+                                .fcmp(FloatCC::LessThanOrEqual, value_a, value_b);
+                        self.ins_b_to_f64(cmp_res)
+                    }
+                    ASTBinOp::Gt => {
+                        let cmp_res =
+                            self.builder
+                                .ins()
+                                .fcmp(FloatCC::GreaterThan, value_a, value_b);
+                        self.ins_b_to_f64(cmp_res)
+                    }
+                    ASTBinOp::Lt => {
+                        let cmp_res = self.builder.ins().fcmp(FloatCC::LessThan, value_a, value_b);
+                        self.ins_b_to_f64(cmp_res)
+                    }
+                }
             }
             ASTNode::Call(name, fstate_index, arg) => {
                 let value_arg = self.compile(arg);
@@ -446,12 +494,48 @@ impl<'a> FunctionTranslator<'a> {
                 }
             }
             ASTNode::If(cond, then, els) => {
-                let res = self.compile(cond);
-                let cmpv = self.builder.ins().f64const(0.5);
-                let condition_value =
+                let condition_value = if let ASTNode::BinOp(op, a, b) = cond.as_ref() {
+                    match op {
+                        ASTBinOp::Eq => {
+                            let a = self.compile(a);
+                            let b = self.compile(b);
+                            self.builder.ins().fcmp(FloatCC::Equal, a, b)
+                        }
+                        ASTBinOp::Ne => {
+                            let a = self.compile(a);
+                            let b = self.compile(b);
+                            let eq = self.builder.ins().fcmp(FloatCC::Equal, a, b);
+                            self.builder.ins().bnot(eq)
+                        }
+                        ASTBinOp::Gt => {
+                            let a = self.compile(a);
+                            let b = self.compile(b);
+                            self.builder.ins().fcmp(FloatCC::GreaterThan, a, b)
+                        }
+                        ASTBinOp::Lt => {
+                            let a = self.compile(a);
+                            let b = self.compile(b);
+                            self.builder.ins().fcmp(FloatCC::LessThan, a, b)
+                        }
+                        ASTBinOp::Ge => {
+                            let a = self.compile(a);
+                            let b = self.compile(b);
+                            self.builder.ins().fcmp(FloatCC::GreaterThanOrEqual, a, b)
+                        }
+                        ASTBinOp::Le => {
+                            let a = self.compile(a);
+                            let b = self.compile(b);
+                            self.builder.ins().fcmp(FloatCC::LessThanOrEqual, a, b)
+                        }
+                        _ => self.compile(cond),
+                    }
+                } else {
+                    let res = self.compile(cond);
+                    let cmpv = self.builder.ins().f64const(0.5);
                     self.builder
                         .ins()
-                        .fcmp(FloatCC::GreaterThanOrEqual, res, cmpv);
+                        .fcmp(FloatCC::GreaterThanOrEqual, res, cmpv)
+                };
 
                 let then_block = self.builder.create_block();
                 let else_block = self.builder.create_block();
