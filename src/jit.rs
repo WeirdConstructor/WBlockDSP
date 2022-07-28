@@ -52,8 +52,11 @@ impl JIT {
             .finish(settings::Flags::new(flag_builder))
             .unwrap();
         let mut builder = JITBuilder::with_isa(isa, default_libcall_names());
-        builder.symbol("test", test as *const u8);
-        builder.symbol("sin", std::primitive::f64::sin as *const u8);
+
+        dsp_lib.borrow().for_each(|typ| {
+            builder.symbol(typ.name(), typ.function_ptr());
+        });
+        //        builder.symbol("sin", std::primitive::f64::sin as *const u8);
 
         let module = JITModule::new(builder);
         Self {
@@ -155,8 +158,7 @@ struct DSPFunctionTranslator<'a, 'b> {
     variables: HashMap<String, Variable>,
     var_index: usize,
     module: &'a mut JITModule,
-    func: Option<FuncId>,
-    func2: Option<FuncId>,
+    functions: HashMap<String, (Rc<dyn DSPNodeType>, FuncId)>,
     ptr_w: u32,
 }
 
@@ -258,7 +260,7 @@ impl NodeStateType {
 /// You will not have to allocate and manage this manually, see also [DSPNodeStateCollection].
 pub struct DSPNodeState {
     /// Holds the type of this piece of state.
-    node_type: Rc<RefCell<dyn DSPNodeType>>,
+    node_type: Rc<dyn DSPNodeType>,
     /// A pointer to the allocated piece of state. It will be shared
     /// with the execution thread. So you must not touch the data that is referenced
     /// here.
@@ -273,11 +275,10 @@ pub struct DSPNodeState {
 
 impl DSPNodeState {
     /// Creates a fresh piece of DSP node state.
-    pub fn new(node_type: Rc<RefCell<dyn DSPNodeType>>) -> Self {
+    pub fn new(node_type: Rc<dyn DSPNodeType>) -> Self {
         Self {
             node_type: node_type.clone(),
             ptr: node_type
-                .borrow()
                 .allocate_state()
                 .expect("DSPNodeState created for stateful node type"),
             generation: 0,
@@ -298,13 +299,13 @@ impl Drop for DSPNodeState {
     /// that the pointer that was shared with the execution thread is no longer
     /// in use.
     fn drop(&mut self) {
-        self.node_type.borrow().deallocate_state(self.ptr);
+        self.node_type.deallocate_state(self.ptr);
         self.ptr = std::ptr::null_mut();
     }
 }
 
 pub struct DSPNodeTypeLibrary {
-    types: Vec<Rc<RefCell<dyn DSPNodeType>>>,
+    types: Vec<Rc<dyn DSPNodeType>>,
 }
 
 impl DSPNodeTypeLibrary {
@@ -312,13 +313,13 @@ impl DSPNodeTypeLibrary {
         Self { types: vec![] }
     }
 
-    pub fn add(&mut self, typ: Rc<RefCell<dyn DSPNodeType>>) {
+    pub fn add(&mut self, typ: Rc<dyn DSPNodeType>) {
         self.types.push(typ);
     }
 
-    pub fn for_each<F: FnMut(&dyn DSPNodeType)>(&self, mut f: F) {
+    pub fn for_each<F: FnMut(&Rc<dyn DSPNodeType>)>(&self, mut f: F) {
         for t in self.types.iter() {
-            f(&*t.borrow());
+            f(&t);
         }
     }
 }
@@ -356,7 +357,7 @@ pub struct DSPFunction {
     state: *mut DSPState,
     func_states: Vec<*mut u8>,
     function: Box<
-        Fn(
+        dyn Fn(
             f64,
             f64,
             f64,
@@ -409,8 +410,7 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
             variables: HashMap::new(),
             builder,
             module,
-            func: None,
-            func2: None,
+            functions: HashMap::new(),
             ptr_w: 8,
         }
     }
@@ -422,28 +422,58 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
         // (see also https://zmedley.com/calling-rust.html)
         let ptr_type = self.module.target_config().pointer_type();
 
-        let mut sig = self.module.make_signature();
-        sig.params.push(AbiParam::new(F64));
-        sig.params.push(AbiParam::new(ptr_type));
-        sig.params.push(AbiParam::new(ptr_type));
-        sig.returns.push(AbiParam::new(F64));
+        let mut functions = HashMap::new();
+        self.dsp_lib.for_each(|typ| {
+            let mut sig = self.module.make_signature();
+            let mut i = 0;
+            while let Some(bit) = typ.signature(i) {
+                match bit {
+                    DSPNodeSigBit::Value => {
+                        sig.params.push(AbiParam::new(F64));
+                    }
+                    DSPNodeSigBit::DSPStatePtr | DSPNodeSigBit::NodeStatePtr => {
+                        sig.params.push(AbiParam::new(ptr_type));
+                    }
+                }
+                i += 1;
+            }
 
-        let mut sig2 = self.module.make_signature();
-        sig2.params.push(AbiParam::new(F64));
-        sig2.returns.push(AbiParam::new(F64));
+            if typ.has_return_value() {
+                sig.returns.push(AbiParam::new(F64));
+            }
 
-        self.func = Some(
-            self.module
-                .declare_function("test", cranelift_module::Linkage::Import, &sig)
-                .map_err(|e| e.to_string())
-                .unwrap(),
-        );
-        self.func2 = Some(
-            self.module
-                .declare_function("sin", cranelift_module::Linkage::Import, &sig2)
-                .map_err(|e| e.to_string())
-                .unwrap(),
-        );
+            let func_id =
+                self.module
+                    .declare_function(typ.name(), cranelift_module::Linkage::Import, &sig)
+                    .map_err(|e| e.to_string())
+                    .unwrap();
+
+            functions.insert(typ.name().to_string(), (typ.clone(), func_id));
+        });
+
+        self.functions = functions;
+
+        //        let mut sig = self.module.make_signature();
+        //        sig.params.push(AbiParam::new(F64));
+        //        sig.params.push(AbiParam::new(ptr_type));
+        //        sig.params.push(AbiParam::new(ptr_type));
+        //
+        //        let mut sig2 = self.module.make_signature();
+        //        sig2.params.push(AbiParam::new(F64));
+        //        sig2.returns.push(AbiParam::new(F64));
+        //
+        //        self.func = Some(
+        //            self.module
+        //                .declare_function("test", cranelift_module::Linkage::Import, &sig)
+        //                .map_err(|e| e.to_string())
+        //                .unwrap(),
+        //        );
+        //        self.func2 = Some(
+        //            self.module
+        //                .declare_function("sin", cranelift_module::Linkage::Import, &sig2)
+        //                .map_err(|e| e.to_string())
+        //                .unwrap(),
+        //        );
     }
 
     /// Declare a single variable declaration.
@@ -585,7 +615,14 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
             }
             ASTNode::Call(name, fstate_index, arg) => {
                 let value_arg = self.compile(arg);
+
+                let func = self.functions.get(name).expect("Funciton Name exists");
+                let func_id = func.1;
+
                 if name == "test" {
+                    // TODO: Use the DSPNodeType here to determine which arguments to pass!
+                    // TODO: Then use the DSPNodeContext to allocate and prepare the
+                    //       &state and &fstate locals!
                     let ptr_type = self.module.target_config().pointer_type();
                     let state_var = self.variables.get("&state").unwrap();
                     let ptr = self.builder.use_var(*state_var);
@@ -601,7 +638,7 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
 
                     let local_callee = self
                         .module
-                        .declare_func_in_func(self.func.unwrap(), &mut self.builder.func);
+                        .declare_func_in_func(func_id, &mut self.builder.func);
                     let call = self
                         .builder
                         .ins()
@@ -610,7 +647,7 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
                 } else {
                     let local_callee = self
                         .module
-                        .declare_func_in_func(self.func2.unwrap(), &mut self.builder.func);
+                        .declare_func_in_func(func_id, &mut self.builder.func);
                     let call = self.builder.ins().call(local_callee, &[value_arg]);
                     self.builder.inst_results(call)[0]
                 }
@@ -1012,9 +1049,7 @@ impl DSPNodeType for SinNodeType {
 
 pub fn get_default_library() -> Rc<RefCell<DSPNodeTypeLibrary>> {
     let lib = Rc::new(RefCell::new(DSPNodeTypeLibrary::new()));
-    lib.borrow_mut()
-        .add(Rc::new(RefCell::new(TestNodeType::default())));
-    lib.borrow_mut()
-        .add(Rc::new(RefCell::new(SinNodeType::default())));
+    lib.borrow_mut().add(Rc::new(TestNodeType::default()));
+    lib.borrow_mut().add(Rc::new(SinNodeType::default()));
     lib
 }
