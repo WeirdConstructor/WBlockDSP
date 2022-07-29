@@ -19,7 +19,7 @@ macro_rules! assert_float_eq {
 
 #[test]
 fn check_jit() {
-    let mut jit = JIT::new(get_default_library());
+    let mut jit = JIT::new(get_default_library(), DSPNodeContext::new_ref());
 
     let ast = ASTNode::Assign(
         "&sig1".to_string(),
@@ -74,7 +74,7 @@ fn check_jit() {
 
 #[test]
 fn check_jit_stmts() {
-    let mut jit = JIT::new(get_default_library());
+    let mut jit = JIT::new(get_default_library(), DSPNodeContext::new_ref());
 
     let ast = ASTNode::Stmts(vec![
         Box::new(ASTNode::Assign("&sig1".to_string(), Box::new(ASTNode::Var("in2".to_string())))),
@@ -122,7 +122,7 @@ fn check_jit_stmts() {
 }
 
 fn run_ast(ast: Box<ASTNode>, in1: f64, in2: f64) -> (f64, f64, f64) {
-    let mut jit = JIT::new(get_default_library());
+    let mut jit = JIT::new(get_default_library(), DSPNodeContext::new_ref());
     let fun = ASTFun::new(ast);
 
     let code = jit.compile(fun).unwrap();
@@ -164,7 +164,7 @@ fn run_ast(ast: Box<ASTNode>, in1: f64, in2: f64) -> (f64, f64, f64) {
 
 #[test]
 fn check_jit_sin() {
-    let mut jit = JIT::new(get_default_library());
+    let mut jit = JIT::new(get_default_library(), DSPNodeContext::new_ref());
 
     let ast = ASTNode::Call("sin".to_string(), 0, vec![Box::new(ASTNode::Lit(0.5 * 3.14))]);
 

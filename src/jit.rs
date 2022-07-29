@@ -35,10 +35,16 @@ pub struct JIT {
 
     /// The available DSP node types that an be called by the code.
     dsp_lib: Rc<RefCell<DSPNodeTypeLibrary>>,
+
+    /// The current [DSPNodeContext] we compile a [DSPFunction] for
+    dsp_ctx: Rc<RefCell<DSPNodeContext>>,
 }
 
 impl JIT {
-    pub fn new(dsp_lib: Rc<RefCell<DSPNodeTypeLibrary>>) -> Self {
+    pub fn new(
+        dsp_lib: Rc<RefCell<DSPNodeTypeLibrary>>,
+        dsp_ctx: Rc<RefCell<DSPNodeContext>>,
+    ) -> Self {
         let mut flag_builder = settings::builder();
         flag_builder
             .set("use_colocated_libcalls", "false")
@@ -69,6 +75,7 @@ impl JIT {
             // data_ctx: DataContext::new(),
             module: Some(module),
             dsp_lib,
+            dsp_ctx,
         }
     }
 
@@ -114,9 +121,11 @@ impl JIT {
         let builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
 
         let module = self.module.as_mut().expect("Module still loaded");
-        let lib = self.dsp_lib.clone();
-        let lib = lib.borrow();
-        let mut trans = DSPFunctionTranslator::new(&*lib, builder, module);
+        let dsp_lib = self.dsp_lib.clone();
+        let dsp_lib = dsp_lib.borrow();
+        let dsp_ctx = self.dsp_ctx.clone();
+        let mut dsp_ctx = dsp_ctx.borrow_mut();
+        let mut trans = DSPFunctionTranslator::new(&mut *dsp_ctx, &*dsp_lib, builder, module);
         trans.register_functions();
         let ret = trans.translate(fun)?;
         //d// println!("{}", trans.builder.func.display());
@@ -136,7 +145,8 @@ impl Drop for JIT {
     }
 }
 
-struct DSPFunctionTranslator<'a, 'b> {
+struct DSPFunctionTranslator<'a, 'b, 'c> {
+    dsp_ctx: &'c mut DSPNodeContext,
     dsp_lib: &'b DSPNodeTypeLibrary,
     builder: FunctionBuilder<'a>,
     variables: HashMap<String, Variable>,
@@ -208,38 +218,6 @@ pub trait DSPNodeType {
     }
 }
 
-/// Encodes the type of state that a DSP node requires.
-///
-/// See also [DSPNodeState] and [DSPNodeStateCollection].
-#[derive(Debug, Clone, Copy)]
-pub enum NodeStateType {
-    Test,
-}
-
-impl NodeStateType {
-    /// Allocates a new piece of DSP node state.
-    ///
-    /// Used by [DSPNodeState] to construct and destruct DSP node state.
-    ///
-    /// Attention: You must properly free the returned pointer! It will not be
-    /// automatically freed for you. You have to call [NodeStateType::deallocate]
-    /// with the pointer that was returned from here.
-    pub fn alloc_new_state(&self) -> *mut u8 {
-        match self {
-            NodeStateType::Test => Box::into_raw(Box::new(TSTState::new())) as *mut u8,
-        }
-    }
-
-    /// Frees a pointer returned from [NodeStateType::alloc_new_state].
-    pub fn deallocate(&self, ptr: *mut u8) {
-        match self {
-            NodeStateType::Test => {
-                unsafe { Box::from_raw(ptr) };
-            }
-        }
-    }
-}
-
 /// A handle to manage the state of a DSP node
 /// that was created while the [DSPFunctionTranslator] compiled the given AST
 /// to machine code.
@@ -248,7 +226,7 @@ impl NodeStateType {
 /// pointer will be shared with the execution thread that will execute the
 /// complete DSP function/graph.
 ///
-/// You will not have to allocate and manage this manually, see also [DSPNodeStateCollection].
+/// You will not have to allocate and manage this manually, see also [DSPFunction].
 pub struct DSPNodeState {
     /// Holds the type of this piece of state.
     node_type: Rc<dyn DSPNodeType>,
@@ -259,9 +237,12 @@ pub struct DSPNodeState {
     /// A generation counter that is used by [DSPNodeContext] to determine
     /// if a piece of state is not used anymore.
     generation: u64,
-    /// The current index into the most recent [DSPNodeStateCollection] that was
+    /// The current index into the most recent [DSPFunction] that was
     /// constructed by [DSPNodeContext].
-    collection_index: usize,
+    function_index: usize,
+    /// A flag that stores if this DSPNodeState instance was already initialized.
+    /// It is set by [DSPNodeContext] if a finished [DSPFunction] was successfully compiled.
+    initialized: bool,
 }
 
 impl DSPNodeState {
@@ -271,15 +252,32 @@ impl DSPNodeState {
             node_type: node_type.clone(),
             ptr: node_type.allocate_state().expect("DSPNodeState created for stateful node type"),
             generation: 0,
-            collection_index: 0,
+            function_index: 0,
+            initialized: false,
         }
     }
 
     /// Marks this piece of DSP state as used and deposits the
-    /// index into the current [DSPNodeStateCollection].
+    /// index into the current [DSPFunction].
     pub fn mark(&mut self, gen: u64, index: usize) {
         self.generation = gen;
-        self.collection_index = index;
+        self.function_index = index;
+    }
+
+    /// Checks if the [DSPNodeState] was initialized by the most recently compiled [DSPFunction]
+    pub fn is_initialized(&self) -> bool {
+        self.initialized
+    }
+
+    /// Sets that the [DSPNodeState] is initialized.
+    ///
+    /// This happens once the [DSPNodeContext] finished compiling a [DSPFunction].
+    /// The user of the [DSPNodeContext] or rather the [JIT] needs to make sure to
+    /// actually really call [DSPFunction::init] of course. Otherwise this state tracking
+    /// all falls apart. But this happens across different threads, so the synchronizing effort
+    /// for this is not worth it (regarding development time) at the moment I think.
+    pub fn set_initialized(&mut self) {
+        self.initialized = true;
     }
 }
 
@@ -293,19 +291,35 @@ impl Drop for DSPNodeState {
     }
 }
 
+/// This structure holds all the [DSPNodeType] definitions and provides
+/// them to the [JIT] and [DSPFunctionTranslator].
 pub struct DSPNodeTypeLibrary {
     types: Vec<Rc<dyn DSPNodeType>>,
 }
 
 impl DSPNodeTypeLibrary {
+    /// Create a new instance of this.
     pub fn new() -> Self {
         Self { types: vec![] }
     }
 
+    /// Add the given [DSPNodeType] to this library.
     pub fn add(&mut self, typ: Rc<dyn DSPNodeType>) {
         self.types.push(typ);
     }
 
+    /// Iterate through all types in the Library:
+    ///
+    ///```
+    /// use wblockdsp::*;
+    ///
+    /// let lib = DSPNodeTypeLibrary::new();
+    /// // ...
+    /// lib.for_each(|typ| {
+    ///     println!("Type available: {}", typ.name());
+    ///     Ok(())
+    /// }).expect("no error");
+    ///```
     pub fn for_each<T, F: FnMut(&Rc<dyn DSPNodeType>) -> Result<(), T>>(
         &self,
         mut f: F,
@@ -322,20 +336,49 @@ impl DSPNodeTypeLibrary {
 pub struct DSPNodeContext {
     /// The global DSP state that is passed to all stateful DSP nodes.
     state: *mut DSPState,
-    /// A map of unique DSP node instances that need private state.
+    /// A map of unique DSP node instances (identified by dsp_node_uid) that need private state.
     func_states: HashMap<u64, Box<DSPNodeState>>,
     /// A generation counter to determine whether some [DSPNodeState] instances in `func_states`
     /// can be cleaned up.
     generation: u64,
+    /// Contains the currently compiled [DSPFunction].
+    next_dsp_fun: Option<Box<DSPFunction>>,
 }
 
 impl DSPNodeContext {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             state: Box::into_raw(Box::new(DSPState { x: 0.0, y: 0.0, srate: 44100.0 })),
             func_states: HashMap::new(),
             generation: 0,
+            next_dsp_fun: None,
         }
+    }
+
+    pub fn new_ref() -> Rc<RefCell<Self>> {
+        Rc::new(RefCell::new(Self::new()))
+    }
+
+    pub fn init_dsp_function(&mut self) {
+        // TODO: tracking the uninitialized states in DSPNodeContext
+        //      and commit() them if the function was successfully compiled! Might be
+        //      easier to manage. That could be just a flag in func_states!
+        self.next_dsp_fun = Some(Box::new(DSPFunction::new(self.state)));
+    }
+
+    pub fn add_dsp_node_instance(&mut self, node_type: Rc<dyn DSPNodeType>, dsp_node_uid: usize) -> bool {
+        // TODO: Return false if the dsp_node_uis is duplicated.
+        // TODO: create a new DSPNodeState here and register it.
+        // TODO: Remember to manage the func_state_init_reset in DSPFunction
+        false
+    }
+
+    pub fn finalize_dsp_function(&mut self) -> Option<Box<DSPFunction>> {
+        if let Some(next_dsp_fun) = &mut self.next_dsp_fun {
+            // TODO: Iterate through the next_dsp_fun and mark all the new [DSPNodeState]
+            //       in self.func_states as initialized.
+        }
+        self.next_dsp_fun.take()
     }
 }
 
@@ -484,15 +527,20 @@ pub enum JITCompileError {
     DefineTopFunError(String),
     UndefinedDSPNode(String),
     NotEnoughArgsInCall(String, usize),
+    DuplicatedDSPNodeStateUID(String, usize),
 }
 
-impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
+impl<'a, 'b, 'c> DSPFunctionTranslator<'a, 'b, 'c> {
     pub fn new(
+        dsp_ctx: &'c mut DSPNodeContext,
         dsp_lib: &'b DSPNodeTypeLibrary,
         builder: FunctionBuilder<'a>,
         module: &'a mut JITModule,
     ) -> Self {
+        dsp_ctx.init_dsp_function();
+
         Self {
+            dsp_ctx,
             dsp_lib,
             var_index: 0,
             variables: HashMap::new(),
@@ -706,12 +754,13 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
 
                 Ok(value)
             }
-            ASTNode::Call(name, fstate_index, args) => {
+            ASTNode::Call(name, dsp_node_uid, args) => {
                 let func = self
                     .functions
                     .get(name)
                     .ok_or_else(|| JITCompileError::UndefinedDSPNode(name.to_string()))?
                     .clone();
+                let node_type = func.0;
                 let func_id = func.1;
 
                 let ptr_type = self.module.target_config().pointer_type();
@@ -719,13 +768,13 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
                 let mut dsp_node_fun_params = vec![];
                 let mut i = 0;
                 let mut arg_idx = 0;
-                while let Some(bit) = func.0.signature(i) {
+                while let Some(bit) = node_type.signature(i) {
                     match bit {
                         DSPNodeSigBit::Value => {
                             if arg_idx >= args.len() {
                                 return Err(JITCompileError::NotEnoughArgsInCall(
                                     name.to_string(),
-                                    *fstate_index,
+                                    *dsp_node_uid,
                                 ));
                             }
                             dsp_node_fun_params.push(self.compile(&args[arg_idx])?);
@@ -746,13 +795,22 @@ impl<'a, 'b> DSPFunctionTranslator<'a, 'b> {
                                 ptr_type,
                                 MemFlags::new(),
                                 fptr,
-                                Offset32::new(*fstate_index as i32 * self.ptr_w as i32),
+                                Offset32::new(*dsp_node_uid as i32 * self.ptr_w as i32),
                             );
                             dsp_node_fun_params.push(func_state);
                         }
                     }
 
                     i += 1;
+                }
+
+                if node_type.is_stateful() {
+                    if !self.dsp_ctx.add_dsp_node_instance(node_type.clone(), *dsp_node_uid) {
+                        return Err(JITCompileError::DuplicatedDSPNodeStateUID(
+                            node_type.name().to_string(),
+                            *dsp_node_uid,
+                        ));
+                    }
                 }
 
                 // TODO: Then use the DSPNodeContext to allocate and prepare the
