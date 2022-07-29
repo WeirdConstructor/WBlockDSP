@@ -20,7 +20,7 @@ macro_rules! assert_float_eq {
 #[test]
 fn check_jit() {
     let dsp_ctx = DSPNodeContext::new_ref();
-    let mut jit = JIT::new(get_default_library(), dsp_ctx.clone());
+    let jit = JIT::new(get_default_library(), dsp_ctx.clone());
 
     let ast = ASTNode::Assign(
         "&sig1".to_string(),
@@ -75,7 +75,7 @@ fn check_jit() {
 #[test]
 fn check_jit_stmts() {
     let dsp_ctx = DSPNodeContext::new_ref();
-    let mut jit = JIT::new(get_default_library(), dsp_ctx.clone());
+    let jit = JIT::new(get_default_library(), dsp_ctx.clone());
 
     let ast = ASTNode::Stmts(vec![
         Box::new(ASTNode::Assign("&sig1".to_string(), Box::new(ASTNode::Var("in2".to_string())))),
@@ -95,116 +95,58 @@ fn check_jit_stmts() {
 
     dsp_ctx.borrow_mut().free();
 }
-//
-//fn run_ast(ast: Box<ASTNode>, in1: f64, in2: f64) -> (f64, f64, f64) {
-//    let mut jit = JIT::new(get_default_library(), DSPNodeContext::new_ref());
-//    let fun = ASTFun::new(ast);
-//
-//    let code = jit.compile(fun).unwrap();
-//    let ptr_b = unsafe {
-//        mem::transmute::<
-//            _,
-//            fn(
-//                f64,
-//                f64,
-//                f64,
-//                f64,
-//                f64,
-//                f64,
-//                *mut f64,
-//                *mut f64,
-//                *mut DSPState,
-//                *mut *mut std::ffi::c_void,
-//            ) -> f64,
-//        >(code)
-//    };
-//
-//    let mut s1 = 0.0;
-//    let mut s2 = 0.0;
-//    let mut state = DSPState { x: 0.0, y: 1.0, srate: 0.0 };
-//    let res1 = ptr_b(
-//        in1,
-//        in2,
-//        3.0,
-//        4.0,
-//        5.0,
-//        6.0,
-//        &mut s1,
-//        &mut s2,
-//        &mut state,
-//        std::ptr::null_mut() as *mut *mut std::ffi::c_void,
-//    );
-//    (s1, s2, res1)
-//}
-//
-//#[test]
-//fn check_jit_sin() {
-//    let mut jit = JIT::new(get_default_library(), DSPNodeContext::new_ref());
-//
-//    let ast = ASTNode::Call("sin".to_string(), 0, vec![Box::new(ASTNode::Lit(0.5 * 3.14))]);
-//
-//    let fun = ASTFun::new(Box::new(ast));
-//    let code = jit.compile(fun).unwrap();
-//    let ptr_b = unsafe {
-//        mem::transmute::<
-//            _,
-//            fn(
-//                f64,
-//                f64,
-//                f64,
-//                f64,
-//                f64,
-//                f64,
-//                *mut f64,
-//                *mut f64,
-//                *mut DSPState,
-//                *mut *mut std::ffi::c_void,
-//            ) -> f64,
-//        >(code)
-//    };
-//
-//    let mut s1 = 0.0;
-//    let mut s2 = 0.0;
-//    let mut state = DSPState { x: 0.0, y: 1.0, srate: 0.0 };
-//    let res1 = ptr_b(
-//        1.1,
-//        2.2,
-//        3.0,
-//        4.0,
-//        5.0,
-//        6.0,
-//        &mut s1,
-//        &mut s2,
-//        &mut state,
-//        std::ptr::null_mut() as *mut *mut std::ffi::c_void,
-//    );
-//    assert_float_eq!(res1, 1.0);
-//}
-//
-//#[test]
-//fn check_jit_wlambda() {
-//    let global_env = wlambda::GlobalEnv::new_default();
-//    global_env.borrow_mut().set_module("jit", wlapi::setup_jit_module());
-//    let mut ctx = wlambda::compiler::EvalContext::new(global_env);
-//
-//    let ast: VVal = ctx
-//        .eval(
-//            r#"
-//            !@import jit;
-//            !n = jit:node $[:if,
-//                $[:binop, :gt, "in1", 10],
-//                1.2,
-//                "in2"
-//            ];
-//            std:displayln "AAAAA" n.dump[];
-//            n
-//        "#,
-//        )
-//        .unwrap();
-//    assert_eq!(ast.s(), "$<JIT::ASTNode:if>");
-//    let ret = run_ast(vv2ast_node(ast.clone()).unwrap(), 20.21, 3.4);
-//    assert_float_eq!(ret.2, 1.2);
-//
-//    let ret = run_ast(vv2ast_node(ast.clone()).unwrap(), 2.21, 3.4);
-//    assert_float_eq!(ret.2, 3.4);
-//}
+
+#[test]
+fn check_jit_sin() {
+    let ctx = DSPNodeContext::new_ref();
+    let jit = JIT::new(get_default_library(), ctx.clone());
+
+    let ast = ASTNode::Call("sin".to_string(), 0, vec![Box::new(ASTNode::Lit(0.5 * 3.14))]);
+    let fun = ASTFun::new(Box::new(ast));
+    let mut code = jit.compile(fun).unwrap();
+    let mut s1 = 0.0;
+    let mut s2 = 0.0;
+    let res1 = code.exec(1.1, 2.2, 3.0, 4.0, 5.0, 6.0, &mut s1, &mut s2);
+    assert_float_eq!(res1, 1.0);
+
+    ctx.borrow_mut().free();
+}
+
+#[test]
+fn check_jit_wlambda() {
+    let global_env = wlambda::GlobalEnv::new_default();
+    global_env.borrow_mut().set_module("jit", wlapi::setup_jit_module());
+    let mut ctx = wlambda::compiler::EvalContext::new(global_env);
+
+    let ast: VVal = ctx
+        .eval(
+            r#"
+            !@import jit;
+            !n = jit:node $[:if,
+                $[:binop, :gt, "in1", 10],
+                1.2,
+                "in2"
+            ];
+            std:displayln "AAAAA" n.dump[];
+            n
+        "#,
+        )
+        .unwrap();
+
+    let ctx = DSPNodeContext::new_ref();
+    let jit = JIT::new(get_default_library(), ctx.clone());
+
+    assert_eq!(ast.s(), "$<JIT::ASTNode:if>");
+
+    let mut code = jit.compile(ASTFun::new(vv2ast_node(ast).unwrap())).unwrap();
+
+    let mut s1 = 0.0;
+    let mut s2 = 0.0;
+    let ret = code.exec(20.21, 3.4, 3.0, 4.0, 5.0, 6.0, &mut s1, &mut s2);
+    assert_float_eq!(ret, 1.2);
+
+    let ret = code.exec(2.21, 3.4, 3.0, 4.0, 5.0, 6.0, &mut s1, &mut s2);
+    assert_float_eq!(ret, 3.4);
+
+    ctx.borrow_mut().free();
+}

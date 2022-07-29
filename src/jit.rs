@@ -131,7 +131,7 @@ impl JIT {
         let dsp_ctx = self.dsp_ctx.clone();
         let mut dsp_ctx = dsp_ctx.borrow_mut();
         let mut trans = DSPFunctionTranslator::new(&mut *dsp_ctx, &*dsp_lib, builder, module);
-        trans.register_functions();
+        trans.register_functions()?;
         let ret = trans.translate(fun)?;
         println!("{}", trans.builder.func.display());
         Ok(ret)
@@ -1301,7 +1301,7 @@ impl Default for TSTState {
     }
 }
 
-pub fn test(x: f64, state: *mut DSPState, mystate: *mut u8) -> f64 {
+pub extern "C" fn test(x: f64, state: *mut DSPState, mystate: *mut u8) -> f64 {
     println!("TEST CALL1");
     unsafe {
         let p = mystate as *mut TSTState;
