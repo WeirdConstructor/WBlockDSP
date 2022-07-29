@@ -318,7 +318,7 @@ impl DSPNodeTypeLibrary {
     ///
     /// let lib = DSPNodeTypeLibrary::new();
     /// // ...
-    /// lib.for_each(|typ| {
+    /// lib.for_each(|typ| -> Result<(), ()> {
     ///     println!("Type available: {}", typ.name());
     ///     Ok(())
     /// }).expect("no error");
