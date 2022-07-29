@@ -206,3 +206,71 @@ impl ASTNode {
         s
     }
 }
+
+pub mod build {
+    use super::*;
+
+    pub fn fun(e: Box<ASTNode>) -> ASTFun {
+        ASTFun::new(e)
+    }
+
+    pub fn literal(v: f64) -> Box<ASTNode> {
+        Box::new(ASTNode::Lit(v))
+    }
+
+    pub fn var(name: &str) -> Box<ASTNode> {
+        Box::new(ASTNode::Var(name.to_string()))
+    }
+
+    pub fn assign(name: &str, e: Box<ASTNode>) -> Box<ASTNode> {
+        Box::new(ASTNode::Assign(name.to_string(), e))
+    }
+
+    pub fn op_eq(a: Box<ASTNode>, b: Box<ASTNode>) -> Box<ASTNode> {
+        Box::new(ASTNode::BinOp(ASTBinOp::Eq, a, b))
+    }
+
+    pub fn op_ne(a: Box<ASTNode>, b: Box<ASTNode>) -> Box<ASTNode> {
+        Box::new(ASTNode::BinOp(ASTBinOp::Ne, a, b))
+    }
+
+    pub fn op_le(a: Box<ASTNode>, b: Box<ASTNode>) -> Box<ASTNode> {
+        Box::new(ASTNode::BinOp(ASTBinOp::Le, a, b))
+    }
+
+    pub fn op_lt(a: Box<ASTNode>, b: Box<ASTNode>) -> Box<ASTNode> {
+        Box::new(ASTNode::BinOp(ASTBinOp::Lt, a, b))
+    }
+
+    pub fn op_ge(a: Box<ASTNode>, b: Box<ASTNode>) -> Box<ASTNode> {
+        Box::new(ASTNode::BinOp(ASTBinOp::Ge, a, b))
+    }
+
+    pub fn op_gt(a: Box<ASTNode>, b: Box<ASTNode>) -> Box<ASTNode> {
+        Box::new(ASTNode::BinOp(ASTBinOp::Gt, a, b))
+    }
+
+    pub fn op_add(a: Box<ASTNode>, b: Box<ASTNode>) -> Box<ASTNode> {
+        Box::new(ASTNode::BinOp(ASTBinOp::Add, a, b))
+    }
+
+    pub fn op_sub(a: Box<ASTNode>, b: Box<ASTNode>) -> Box<ASTNode> {
+        Box::new(ASTNode::BinOp(ASTBinOp::Sub, a, b))
+    }
+
+    pub fn op_mul(a: Box<ASTNode>, b: Box<ASTNode>) -> Box<ASTNode> {
+        Box::new(ASTNode::BinOp(ASTBinOp::Mul, a, b))
+    }
+
+    pub fn op_div(a: Box<ASTNode>, b: Box<ASTNode>) -> Box<ASTNode> {
+        Box::new(ASTNode::BinOp(ASTBinOp::Div, a, b))
+    }
+
+    pub fn stmts(s: &[Box<ASTNode>]) -> Box<ASTNode> {
+        Box::new(ASTNode::Stmts(s.to_vec()))
+    }
+
+    pub fn call(name: &str, uid: u64, args: &[Box<ASTNode>]) -> Box<ASTNode> {
+        Box::new(ASTNode::Call(name.to_string(), uid, args.to_vec()))
+    }
+}

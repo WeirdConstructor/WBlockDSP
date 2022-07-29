@@ -495,6 +495,8 @@ pub struct DSPFunction {
     ) -> f64,
 }
 
+unsafe impl Send for DSPFunction {}
+
 impl DSPFunction {
     pub fn new(state: *mut DSPState, dsp_ctx_generation: u64) -> Self {
         Self {
@@ -605,6 +607,13 @@ impl DSPFunction {
         }
 
         None
+    }
+
+    pub fn exec_2in_2out(&mut self, in1: f64, in2: f64) -> (f64, f64, f64) {
+        let mut s1 = 0.0;
+        let mut s2 = 0.0;
+        let r = self.exec(in1, in2, 0.0, 0.0, 0.0, 0.0, &mut s1, &mut s2);
+        (s1, s2, r)
     }
 
     pub fn exec(
@@ -1355,13 +1364,15 @@ impl DSPNodeType for TestNodeType {
 #[derive(Default)]
 struct SinNodeType;
 
+pub extern "C" fn jit_sin(v: f64) -> f64 { v.sin() }
+
 impl DSPNodeType for SinNodeType {
     fn name(&self) -> &str {
         "sin"
     }
 
     fn function_ptr(&self) -> *const u8 {
-        std::primitive::f64::sin as *const u8
+        jit_sin as *const u8
     }
 
     fn signature(&self, i: usize) -> Option<DSPNodeSigBit> {
