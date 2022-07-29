@@ -245,3 +245,77 @@ fn check_jit_sample_rate_vars() {
     let (_, _, ret) = exec_ast(var("israte"), 0.0, 0.0);
     assert_float_eq!(ret, 1.0 / 44100.0);
 }
+
+struct MyDSPNode {
+    value: f64,
+}
+
+impl MyDSPNode {
+    fn reset(&mut self, _state: &mut DSPState) {
+        *self = Self::default();
+    }
+}
+
+impl Default for MyDSPNode {
+    fn default() -> Self {
+        Self {
+            value: 0.0,
+        }
+    }
+}
+
+extern "C" fn process_my_dsp_node(my_state: *mut MyDSPNode) -> f64 {
+    let mut my_state = unsafe { &mut *my_state };
+    my_state.value += 1.0;
+    my_state.value
+}
+
+wblockdsp::stateful_dsp_node_type! {
+    DIYNodeType, MyDSPNode => process_my_dsp_node "my_dsp" "Sr"
+}
+
+#[test]
+fn check_self_defined_nodes() {
+    use wblockdsp::build::*;
+
+    let dsp_ctx = DSPNodeContext::new_ref();
+    let lib = get_default_library();
+
+    lib.borrow_mut().add(DIYNodeType::new_ref());
+
+    // Compile first version of the DSP code, just one instance of the
+    // "my_dsp" node:
+    let jit = JIT::new(lib.clone(), dsp_ctx.clone());
+    let mut code = jit.compile(ASTFun::new(call("my_dsp", 0, &[]))).unwrap();
+
+    code.init(44100.0);
+
+    let (_, _, ret) = code.exec_2in_2out(0.0, 0.0);
+    assert_float_eq!(ret, 1.0); // my_dsp counter returned 1.0
+
+
+    // Compile second version of the DSP code, now with two instances:
+    let jit = JIT::new(lib.clone(), dsp_ctx.clone());
+    let ast2 = stmts(&[
+        assign("&sig1", call("my_dsp", 0, &[])),
+        assign("&sig2", call("my_dsp", 1, &[])),
+    ]);
+    let mut code = jit.compile(ASTFun::new(ast2)).unwrap();
+
+    code.init(44100.0);
+    let (s1, s2, _) = code.exec_2in_2out(0.0, 0.0);
+    assert_float_eq!(s1, 2.0); // previous instance of my_dsp returns 2.0
+    assert_float_eq!(s2, 1.0); // new instance returns 1.0
+
+    let (s1, s2, _) = code.exec_2in_2out(0.0, 0.0);
+    assert_float_eq!(s1, 3.0); // previous instance of my_dsp returns 3.0
+    assert_float_eq!(s2, 2.0); // new instance returns 2.0
+
+    // Now we reset the state:
+    code.reset();
+    let (s1, s2, _) = code.exec_2in_2out(0.0, 0.0);
+    assert_float_eq!(s1, 1.0); // Now both have the same starting value
+    assert_float_eq!(s2, 1.0); // Now both have the same starting value
+
+    dsp_ctx.borrow_mut().free();
+}
