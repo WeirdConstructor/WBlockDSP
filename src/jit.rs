@@ -1289,6 +1289,16 @@ impl TSTState {
     pub fn new() -> Self {
         Self { l: 0.0, srate: 0.0 }
     }
+
+    pub fn reset(&mut self, dsp_state: &mut DSPState) {
+        self.srate = dsp_state.srate;
+    }
+}
+
+impl Default for TSTState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 pub fn test(x: f64, state: *mut DSPState, mystate: *mut u8) -> f64 {
@@ -1329,12 +1339,12 @@ impl DSPNodeType for TestNodeType {
     fn reset_state(&self, dsp_state: *mut DSPState, state_ptr: *mut u8) {
         let ptr = state_ptr as *mut TSTState;
         unsafe {
-            (*ptr).srate = (*dsp_state).srate;
+            (*ptr).reset(&mut (*dsp_state));
         }
     }
 
     fn allocate_state(&self) -> Option<*mut u8> {
-        Some(Box::into_raw(Box::new(TSTState { l: 0.0, srate: 0.0 })) as *mut u8)
+        Some(Box::into_raw(Box::new(TSTState::default())) as *mut u8)
     }
 
     fn deallocate_state(&self, ptr: *mut u8) {
