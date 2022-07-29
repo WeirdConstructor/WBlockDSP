@@ -38,7 +38,7 @@ fn check_jit() {
     let fun = ASTFun::new(Box::new(ast));
     let mut code = jit.compile(fun).unwrap();
 
-    code.init(44100.0);
+    code.init(44100.0, None);
 
     unsafe {
         code.with_dsp_state(|state| {
@@ -82,7 +82,7 @@ fn check_jit_stmts() {
     let fun = fun(stmts(&[assign("&sig1", var("in2")), assign("&sig2", var("in1"))]));
 
     let mut code = jit.compile(fun).unwrap();
-    code.init(44100.0);
+    code.init(44100.0, None);
 
     let (s1, s2, res) = code.exec_2in_2out(1.1, 2.2);
     assert_float_eq!(res, 1.1);
@@ -108,7 +108,7 @@ fn check_jit_thread_stmts() {
     let mut code = jit.compile(fun).unwrap();
 
     std::thread::spawn(move || {
-        code.init(44100.0);
+        code.init(44100.0, None);
         let (s1, s2, res) = code.exec_2in_2out(1.1, 2.2);
         tx.send((s1, s2, res));
     })
@@ -230,7 +230,7 @@ fn exec_ast(ast: Box<ASTNode>, in1: f64, in2: f64) -> (f64, f64, f64) {
 
     let mut code = jit.compile(ASTFun::new(ast)).unwrap();
 
-    code.init(44100.0);
+    code.init(44100.0, None);
     let ret = code.exec_2in_2out(in1, in2);
 
     dsp_ctx.borrow_mut().free();
@@ -288,7 +288,7 @@ fn check_self_defined_nodes() {
     let jit = JIT::new(lib.clone(), dsp_ctx.clone());
     let mut code = jit.compile(ASTFun::new(call("my_dsp", 0, &[]))).unwrap();
 
-    code.init(44100.0);
+    code.init(44100.0, None);
 
     let (_, _, ret) = code.exec_2in_2out(0.0, 0.0);
     assert_float_eq!(ret, 1.0); // my_dsp counter returned 1.0
@@ -302,7 +302,7 @@ fn check_self_defined_nodes() {
     ]);
     let mut code = jit.compile(ASTFun::new(ast2)).unwrap();
 
-    code.init(44100.0);
+    code.init(44100.0, None);
     let (s1, s2, _) = code.exec_2in_2out(0.0, 0.0);
     assert_float_eq!(s1, 2.0); // previous instance of my_dsp returns 2.0
     assert_float_eq!(s2, 1.0); // new instance returns 1.0
@@ -316,6 +316,84 @@ fn check_self_defined_nodes() {
     let (s1, s2, _) = code.exec_2in_2out(0.0, 0.0);
     assert_float_eq!(s1, 1.0); // Now both have the same starting value
     assert_float_eq!(s2, 1.0); // Now both have the same starting value
+
+    dsp_ctx.borrow_mut().free();
+}
+
+#[test]
+fn check_persistent_vars() {
+    use wblockdsp::build::*;
+
+    let dsp_ctx = DSPNodeContext::new_ref();
+    let lib = get_default_library();
+
+    let jit = JIT::new(lib.clone(), dsp_ctx.clone());
+    let mut code = jit.compile(ASTFun::new(
+        stmts(&[
+            assign("*a", literal(10.1)),
+            assign("*b", literal(12.03)),
+            var("*a"),
+        ]))).unwrap();
+
+    code.init(44100.0, None);
+
+    let (_, _, ret) = code.exec_2in_2out(0.0, 0.0);
+    assert_float_eq!(ret, 10.1);
+
+    let jit = JIT::new(lib.clone(), dsp_ctx.clone());
+    let mut code2 = jit.compile(ASTFun::new(
+        stmts(&[
+            assign("*c", op_add(var("*a"), var("*b"))),
+            var("*c")
+        ]))).unwrap();
+    code2.init(44100.0, Some(&code));
+
+    let (_, _, ret) = code2.exec_2in_2out(0.0, 0.0);
+    assert_float_eq!(ret, 22.13);
+
+    dsp_ctx.borrow_mut().free();
+}
+
+#[test]
+fn check_phasor_example() {
+    use wblockdsp::build::*;
+
+    let dsp_ctx = DSPNodeContext::new_ref();
+    let lib = get_default_library();
+
+    let jit = JIT::new(lib.clone(), dsp_ctx.clone());
+    let mut code = jit.compile(ASTFun::new(
+        stmts(&[
+            assign("*phase",
+                op_add(
+                    var("*phase"),
+                    op_mul(literal(440.0), var("israte")))),
+            _if(op_gt(var("*phase"), literal(1.0)),
+                assign("*phase",
+                    op_sub(var("*phase"), literal(1.0))),
+                None),
+            var("*phase")
+        ]))).unwrap();
+
+    code.init(44100.0, None);
+
+    let mut out = vec![];
+    for i in 0..200 {
+        let (_, _, ret) = code.exec_2in_2out(0.0, 0.0);
+        if i % 20 == 0 {
+            out.push(ret);
+        }
+    }
+    assert_float_eq!(out[0], 0.0099);
+    assert_float_eq!(out[1], 0.2095);
+    assert_float_eq!(out[2], 0.4090);
+    assert_float_eq!(out[3], 0.6086);
+    assert_float_eq!(out[4], 0.8081);
+    assert_float_eq!(out[5], 0.0077);
+    assert_float_eq!(out[6], 0.2072);
+    assert_float_eq!(out[7], 0.4068);
+    assert_float_eq!(out[8], 0.6063);
+    assert_float_eq!(out[9], 0.8058);
 
     dsp_ctx.borrow_mut().free();
 }

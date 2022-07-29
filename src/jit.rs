@@ -340,6 +340,10 @@ impl DSPNodeTypeLibrary {
 pub struct DSPNodeContext {
     /// The global DSP state that is passed to all stateful DSP nodes.
     state: *mut DSPState,
+    /// Persistent variables:
+    persistent_var_index: usize,
+    /// An assignment of persistent variables to their index in the `persistent_vars` vector.
+    persistent_var_map: HashMap<String, usize>,
     /// A map of unique DSP node instances (identified by dsp_node_uid) that need private state.
     node_states: HashMap<u64, Box<DSPNodeState>>,
     /// A generation counter to determine whether some [DSPNodeState] instances in `node_states`
@@ -361,6 +365,8 @@ impl DSPNodeContext {
             node_states: HashMap::new(),
             generation: 0,
             next_dsp_fun: None,
+            persistent_var_map: HashMap::new(),
+            persistent_var_index: 0,
         }
     }
 
@@ -374,6 +380,25 @@ impl DSPNodeContext {
         //      easier to manage. That could be just a flag in node_states!
         self.generation += 1;
         self.next_dsp_fun = Some(Box::new(DSPFunction::new(self.state, self.generation)));
+    }
+
+    /// Retrieve the index into the persistent variable vector passed in as "&pv".
+    pub fn get_persistent_variable_index(&mut self, pers_var_name: &str) -> Result<usize, String> {
+        let index = if let Some(index) = self.persistent_var_map.get(pers_var_name) {
+            *index
+        } else {
+            let index = self.persistent_var_index;
+            self.persistent_var_index += 1;
+            self.persistent_var_map.insert(pers_var_name.to_string(), index);
+            index
+        };
+
+        if let Some(next_dsp_fun) = &mut self.next_dsp_fun {
+            next_dsp_fun.touch_persistent_var_index(index);
+            Ok(index)
+        } else {
+            Err("No DSPFunction in DSPNodeContext".to_string())
+        }
     }
 
     /// Adds a [DSPNodeState] to the currently compiled [DSPFunction] and returns
@@ -485,6 +510,8 @@ pub struct DSPFunction {
     /// The JITModule that is the home for the `function` pointer. It must be kept alive
     /// as long as the `function` pointer is in use.
     module: Option<JITModule>,
+    /// Storage of persistent variables:
+    persistent_vars: Vec<f64>,
     function: fn(
         f64,
         f64,
@@ -498,6 +525,7 @@ pub struct DSPFunction {
         *mut f64,
         *mut DSPState,
         *mut *mut u8,
+        *mut f64
     ) -> f64,
 }
 
@@ -511,6 +539,7 @@ impl DSPFunction {
             node_states: vec![],
             node_state_init_reset: vec![],
             node_state_uids: vec![],
+            persistent_vars: vec![],
             function: unsafe {
                 mem::transmute::<
                     _,
@@ -527,6 +556,7 @@ impl DSPFunction {
                         *mut f64,
                         *mut DSPState,
                         *mut *mut u8,
+                        *mut f64,
                     ) -> f64,
                 >(std::ptr::null::<*const u8>())
             },
@@ -555,12 +585,19 @@ impl DSPFunction {
                     *mut f64,
                     *mut DSPState,
                     *mut *mut u8,
+                    *mut f64,
                 ) -> f64,
             >(function)
         };
     }
 
-    pub fn init(&mut self, srate: f64) {
+    pub fn init(&mut self, srate: f64, previous_function: Option<&DSPFunction>) {
+        if let Some(previous_function) = previous_function {
+            let prev_len = previous_function.persistent_vars.len();
+            self.persistent_vars[0..prev_len]
+                .copy_from_slice(&previous_function.persistent_vars[0..prev_len])
+        }
+
         unsafe {
             (*self.state).srate = srate;
             (*self.state).israte = 1.0 / srate;
@@ -638,8 +675,21 @@ impl DSPFunction {
     ) -> f64 {
         let (srate, israte) = unsafe { ((*self.state).srate, (*self.state).israte) };
         let states_ptr: *mut *mut u8 = self.node_states.as_mut_ptr();
+        let pers_vars_ptr: *mut f64 = self.persistent_vars.as_mut_ptr();
         let ret = (self.function)(
-            in1, in2, alpha, beta, delta, gamma, srate, israte, sig1, sig2, self.state, states_ptr,
+            in1,
+            in2,
+            alpha,
+            beta,
+            delta,
+            gamma,
+            srate,
+            israte,
+            sig1,
+            sig2,
+            self.state,
+            states_ptr,
+            pers_vars_ptr,
         );
         ret
     }
@@ -657,6 +707,12 @@ impl DSPFunction {
         }
 
         idx
+    }
+
+    pub fn touch_persistent_var_index(&mut self, idx: usize) {
+        if idx >= self.persistent_vars.len() {
+            self.persistent_vars.resize(idx + 1, 0.0);
+        }
     }
 
     pub fn has_dsp_node_state_uid(&self, uid: u64) -> bool {
@@ -848,30 +904,73 @@ impl<'a, 'b, 'c> DSPFunctionTranslator<'a, 'b, 'c> {
         match ast.as_ref() {
             ASTNode::Lit(v) => Ok(self.builder.ins().f64const(*v)),
             ASTNode::Var(name) => {
-                let variable = self
-                    .variables
-                    .get(name)
-                    .ok_or_else(|| JITCompileError::UndefinedVariable(name.to_string()))?;
-
                 if name.chars().next() == Some('&') {
+                    let variable = self
+                        .variables
+                        .get(name)
+                        .ok_or_else(|| JITCompileError::UndefinedVariable(name.to_string()))?;
                     let ptr = self.builder.use_var(*variable);
                     Ok(self.builder.ins().load(F64, MemFlags::new(), ptr, 0))
+                } else if name.chars().next() == Some('*') {
+                    let pv_index = self
+                        .dsp_ctx
+                        .get_persistent_variable_index(name)
+                        .or_else(|_| Err(JITCompileError::UndefinedVariable(name.to_string())))?;
+
+                    let persistent_vars = self
+                        .variables
+                        .get("&pv")
+                        .ok_or_else(|| JITCompileError::UndefinedVariable("&pv".to_string()))?;
+                    let pvs = self.builder.use_var(*persistent_vars);
+                    let pers_value = self.builder.ins().load(
+                        F64,
+                        MemFlags::new(),
+                        pvs,
+                        Offset32::new(pv_index as i32 * F64.bytes() as i32),
+                    );
+                    Ok(pers_value)
                 } else {
+                    let variable = self
+                        .variables
+                        .get(name)
+                        .ok_or_else(|| JITCompileError::UndefinedVariable(name.to_string()))?;
                     Ok(self.builder.use_var(*variable))
                 }
             }
             ASTNode::Assign(name, ast) => {
                 let value = self.compile(ast)?;
 
-                let variable = self
-                    .variables
-                    .get(name)
-                    .ok_or_else(|| JITCompileError::UndefinedVariable(name.to_string()))?;
-
                 if name.chars().next() == Some('&') {
+                    let variable = self
+                        .variables
+                        .get(name)
+                        .ok_or_else(|| JITCompileError::UndefinedVariable(name.to_string()))?;
                     let ptr = self.builder.use_var(*variable);
                     self.builder.ins().store(MemFlags::new(), value, ptr, 0);
+
+                } else if name.chars().next() == Some('*') {
+                    let pv_index = self
+                        .dsp_ctx
+                        .get_persistent_variable_index(name)
+                        .or_else(|_| Err(JITCompileError::UndefinedVariable(name.to_string())))?;
+
+                    let persistent_vars = self
+                        .variables
+                        .get("&pv")
+                        .ok_or_else(|| JITCompileError::UndefinedVariable("&pv".to_string()))?;
+                    let pvs = self.builder.use_var(*persistent_vars);
+                    self.builder.ins().store(
+                        MemFlags::new(),
+                        value,
+                        pvs,
+                        Offset32::new(pv_index as i32 * F64.bytes() as i32),
+                    );
+
                 } else {
+                    let variable = self
+                        .variables
+                        .get(name)
+                        .ok_or_else(|| JITCompileError::UndefinedVariable(name.to_string()))?;
                     self.builder.def_var(*variable, value);
                 }
 
@@ -1127,7 +1226,6 @@ pub extern "C" fn test(x: f64, state: *mut DSPState, mystate: *mut u8) -> f64 {
 macro_rules! stateful_dsp_node_type {
     ($node_type: ident, $struct_type: ident =>
         $func_name: ident $jit_name: literal $signature: literal) => {
-
         struct $node_type;
         impl $node_type {
             fn new_ref() -> std::rc::Rc<Self> {

@@ -39,6 +39,7 @@ impl ASTFun {
                 "&sig2".to_string(),
                 "&state".to_string(),
                 "&fstate".to_string(),
+                "&pv".to_string(),
             ],
             locals: vec![], // vec!["x".to_string(), "y".to_string()],
             ast,
@@ -68,6 +69,9 @@ impl ASTFun {
     pub fn name_is_local_var(&self, name: &str) -> bool {
         for param in self.params.iter() {
             if name == param {
+                return false;
+            }
+            if name.chars().next() == Some('*') {
                 return false;
             }
         }
@@ -272,5 +276,9 @@ pub mod build {
 
     pub fn call(name: &str, uid: u64, args: &[Box<ASTNode>]) -> Box<ASTNode> {
         Box::new(ASTNode::Call(name.to_string(), uid, args.to_vec()))
+    }
+
+    pub fn _if(cond: Box<ASTNode>, a: Box<ASTNode>, b: Option<Box<ASTNode>>) -> Box<ASTNode> {
+        Box::new(ASTNode::If(cond, a, b))
     }
 }
