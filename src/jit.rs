@@ -31,7 +31,7 @@ pub struct JIT {
     // data_ctx: DataContext,
     /// The module, with the jit backend, which manages the JIT'd
     /// functions.
-    module: Option<JITModule>,
+    module: Option<Box<JITModule>>,
 
     /// The available DSP node types that an be called by the code.
     dsp_lib: Rc<RefCell<DSPNodeTypeLibrary>>,
@@ -68,7 +68,7 @@ impl JIT {
             .expect("symbol adding works");
         //        builder.symbol("sin", std::primitive::f64::sin as *const u8);
 
-        let module = JITModule::new(builder);
+        let module = Box::new(JITModule::new(builder));
         Self {
             builder_context: FunctionBuilderContext::new(),
             ctx: module.make_context(),
@@ -81,7 +81,7 @@ impl JIT {
 
     /// Compile a string in the toy language into machine code.
     pub fn compile(mut self, prog: ASTFun) -> Result<Box<DSPFunction>, JITCompileError> {
-        let module = self.module.as_mut().expect("Module still loaded");
+        let mut module = self.module.take().expect("Module still present");
         let ptr_type = module.target_config().pointer_type();
 
         for param_idx in 0..prog.param_count() {
@@ -101,9 +101,16 @@ impl JIT {
         self.ctx.func.name = ExternalName::user(0, id.as_u32());
 
         // Then, translate the AST nodes into Cranelift IR.
-        self.translate(prog)?;
+        //        self.translate(prog)?;
 
-        let mut module = self.module.take().expect("Module still loaded");
+        let dsp_lib = self.dsp_lib.clone();
+        let dsp_ll2 = self.dsp_lib.borrow();
+        let builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
+        let mut trans =
+            DSPFunctionTranslator::new(self.dsp_ctx.clone(), dsp_ll2, builder, &mut module);
+        trans.register_functions().unwrap();
+        trans.translate(prog).unwrap();
+
         module
             .define_function(id, &mut self.ctx)
             .map_err(|e| JITCompileError::DefineTopFunError(e.to_string()))?;
@@ -113,36 +120,32 @@ impl JIT {
 
         let code = module.get_finalized_function(id);
 
-        let dsp_fun = self
-            .dsp_ctx
-            .borrow_mut()
-            .finalize_dsp_function(code, module)
-            .expect("DSPFunction present in DSPNodeContext.");
-
+        let dsp_fun = {
+            self.dsp_ctx
+                .borrow_mut()
+                .finalize_dsp_function(code, module)
+                .expect("DSPFunction present in DSPNodeContext.")
+        };
         Ok(dsp_fun)
     }
 
-    fn translate(&mut self, fun: ASTFun) -> Result<(), JITCompileError> {
-        let builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
-
-        let module = self.module.as_mut().expect("Module still loaded");
-        let dsp_lib = self.dsp_lib.clone();
-        let dsp_lib = dsp_lib.borrow();
-        let dsp_ctx = self.dsp_ctx.clone();
-        let mut dsp_ctx = dsp_ctx.borrow_mut();
-        let mut trans = DSPFunctionTranslator::new(&mut *dsp_ctx, &*dsp_lib, builder, module);
-        trans.register_functions()?;
-        let ret = trans.translate(fun)?;
-        println!("{}", trans.builder.func.display());
-        Ok(ret)
-    }
+    //    fn translate(&mut self, fun: ASTFun) -> Result<(), JITCompileError> {
+    //        let dsp_lib = self.dsp_lib.clone();
+    //        let builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
+    //        let module = self.module.as_mut().expect("Module still loaded");
+    //        let mut trans = DSPFunctionTranslator::new(self.dsp_ctx.clone(), dsp_lib, builder, module);
+    //        trans.register_functions().unwrap();
+    //        trans.translate(fun).unwrap();
+    //        //d// println!("{}", trans.builder.func.display());
+    //        Ok(())
+    //    }
 
     //    pub fn translate_ast_node(&mut self, builder: FunctionBuilder<'a>,
 }
 
-struct DSPFunctionTranslator<'a, 'b, 'c> {
-    dsp_ctx: &'c mut DSPNodeContext,
-    dsp_lib: &'b DSPNodeTypeLibrary,
+struct DSPFunctionTranslator<'a> {
+    dsp_ctx: Rc<RefCell<DSPNodeContext>>,
+    dsp_lib: Rc<RefCell<DSPNodeTypeLibrary>>,
     builder: FunctionBuilder<'a>,
     variables: HashMap<String, Variable>,
     var_index: usize,
@@ -375,9 +378,6 @@ impl DSPNodeContext {
     }
 
     pub fn init_dsp_function(&mut self) {
-        // TODO: tracking the uninitialized states in DSPNodeContext
-        //      and commit() them if the function was successfully compiled! Might be
-        //      easier to manage. That could be just a flag in node_states!
         self.generation += 1;
         self.next_dsp_fun = Some(Box::new(DSPFunction::new(self.state, self.generation)));
     }
@@ -443,10 +443,12 @@ impl DSPNodeContext {
         }
     }
 
+    /// Called by [JIT] after successfully compiling a [DSPFunction]
+    /// to retrieve the [DSPFunction] instance.
     pub fn finalize_dsp_function(
         &mut self,
         function_ptr: *const u8,
-        module: JITModule,
+        module: Box<JITModule>,
     ) -> Option<Box<DSPFunction>> {
         if let Some(mut next_dsp_fun) = self.next_dsp_fun.take() {
             next_dsp_fun.set_function_ptr(function_ptr, module);
@@ -455,14 +457,16 @@ impl DSPNodeContext {
                 node_state.set_initialized();
             }
 
-            // TODO: Garbage collect and free unused node state!
-            //       But this must happen by the backend/frontend thread separation.
-            //       Best would be to provide DSPNodeContext::cleaup_dsp_function_after_use(DSPFunction).
-
             Some(next_dsp_fun)
         } else {
             None
         }
+    }
+
+    /// Cleans up old unused [DSPFunction] instances. Should be done to
+    /// prevent the system from leaking memory when in continous use.
+    pub fn cleanup_dsp_fun_after_user(&mut self, _fun: Box<DSPFunction>) {
+        // TODO: Scan through self.node_states, delete outdated state!
     }
 
     pub fn free(&mut self) {
@@ -509,7 +513,7 @@ pub struct DSPFunction {
     dsp_ctx_generation: u64,
     /// The JITModule that is the home for the `function` pointer. It must be kept alive
     /// as long as the `function` pointer is in use.
-    module: Option<JITModule>,
+    module: Option<Box<JITModule>>,
     /// Storage of persistent variables:
     persistent_vars: Vec<f64>,
     function: fn(
@@ -525,7 +529,7 @@ pub struct DSPFunction {
         *mut f64,
         *mut DSPState,
         *mut *mut u8,
-        *mut f64
+        *mut f64,
     ) -> f64,
 }
 
@@ -567,7 +571,7 @@ impl DSPFunction {
 
     /// At the end of the compilation the [JIT] will put the resulting function
     /// pointer into this function.
-    pub fn set_function_ptr(&mut self, function: *const u8, module: JITModule) {
+    pub fn set_function_ptr(&mut self, function: *const u8, module: Box<JITModule>) {
         self.module = Some(module);
         self.function = unsafe {
             mem::transmute::<
@@ -750,14 +754,14 @@ pub enum JITCompileError {
     NodeStateError(String, u64),
 }
 
-impl<'a, 'b, 'c> DSPFunctionTranslator<'a, 'b, 'c> {
+impl<'a> DSPFunctionTranslator<'a> {
     pub fn new(
-        dsp_ctx: &'c mut DSPNodeContext,
-        dsp_lib: &'b DSPNodeTypeLibrary,
+        dsp_ctx: Rc<RefCell<DSPNodeContext>>,
+        dsp_lib: Rc<RefCell<DSPNodeTypeLibrary>>,
         builder: FunctionBuilder<'a>,
         module: &'a mut JITModule,
     ) -> Self {
-        dsp_ctx.init_dsp_function();
+        dsp_ctx.borrow_mut().init_dsp_function();
 
         Self {
             dsp_ctx,
@@ -779,7 +783,8 @@ impl<'a, 'b, 'c> DSPFunctionTranslator<'a, 'b, 'c> {
         let ptr_type = self.module.target_config().pointer_type();
 
         let mut dsp_node_functions = HashMap::new();
-        self.dsp_lib.for_each(|typ| {
+        let dsp_lib = self.dsp_lib.clone();
+        dsp_lib.borrow().for_each(|typ| {
             let mut sig = self.module.make_signature();
             let mut i = 0;
             while let Some(bit) = typ.signature(i) {
@@ -912,10 +917,10 @@ impl<'a, 'b, 'c> DSPFunctionTranslator<'a, 'b, 'c> {
                     let ptr = self.builder.use_var(*variable);
                     Ok(self.builder.ins().load(F64, MemFlags::new(), ptr, 0))
                 } else if name.chars().next() == Some('*') {
-                    let pv_index = self
-                        .dsp_ctx
-                        .get_persistent_variable_index(name)
-                        .or_else(|_| Err(JITCompileError::UndefinedVariable(name.to_string())))?;
+                    let pv_index =
+                        self.dsp_ctx.borrow_mut().get_persistent_variable_index(name).or_else(
+                            |_| Err(JITCompileError::UndefinedVariable(name.to_string())),
+                        )?;
 
                     let persistent_vars = self
                         .variables
@@ -947,12 +952,11 @@ impl<'a, 'b, 'c> DSPFunctionTranslator<'a, 'b, 'c> {
                         .ok_or_else(|| JITCompileError::UndefinedVariable(name.to_string()))?;
                     let ptr = self.builder.use_var(*variable);
                     self.builder.ins().store(MemFlags::new(), value, ptr, 0);
-
                 } else if name.chars().next() == Some('*') {
-                    let pv_index = self
-                        .dsp_ctx
-                        .get_persistent_variable_index(name)
-                        .or_else(|_| Err(JITCompileError::UndefinedVariable(name.to_string())))?;
+                    let pv_index =
+                        self.dsp_ctx.borrow_mut().get_persistent_variable_index(name).or_else(
+                            |_| Err(JITCompileError::UndefinedVariable(name.to_string())),
+                        )?;
 
                     let persistent_vars = self
                         .variables
@@ -965,7 +969,6 @@ impl<'a, 'b, 'c> DSPFunctionTranslator<'a, 'b, 'c> {
                         pvs,
                         Offset32::new(pv_index as i32 * F64.bytes() as i32),
                     );
-
                 } else {
                     let variable = self
                         .variables
@@ -1052,6 +1055,7 @@ impl<'a, 'b, 'c> DSPFunctionTranslator<'a, 'b, 'c> {
                         DSPNodeSigBit::NodeStatePtr => {
                             let node_state_index = match self
                                 .dsp_ctx
+                                .borrow_mut()
                                 .add_dsp_node_instance(node_type.clone(), *dsp_node_uid)
                             {
                                 Err(e) => {
@@ -1345,4 +1349,12 @@ pub fn get_default_library() -> Rc<RefCell<DSPNodeTypeLibrary>> {
     lib.borrow_mut().add(Rc::new(TestNodeType::default()));
     lib.borrow_mut().add(Rc::new(SinNodeType::default()));
     lib
+}
+
+pub fn get_nop_function(
+    lib: Rc<RefCell<DSPNodeTypeLibrary>>,
+    dsp_ctx: Rc<RefCell<DSPNodeContext>>,
+) -> Box<DSPFunction> {
+    let jit = JIT::new(lib, dsp_ctx);
+    jit.compile(ASTFun::new(Box::new(ASTNode::Lit(0.0)))).expect("No compile error")
 }

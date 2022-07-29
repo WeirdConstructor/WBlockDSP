@@ -364,14 +364,17 @@ fn check_phasor_example() {
     let jit = JIT::new(lib.clone(), dsp_ctx.clone());
     let mut code = jit.compile(ASTFun::new(
         stmts(&[
+            // *phase = *phase + 440.0 * (israte: 1.0 / 44100.0)
             assign("*phase",
                 op_add(
                     var("*phase"),
                     op_mul(literal(440.0), var("israte")))),
+            // if *phase > 1.0 { *phase = *phase - 1.0 }
             _if(op_gt(var("*phase"), literal(1.0)),
                 assign("*phase",
                     op_sub(var("*phase"), literal(1.0))),
                 None),
+            // return *phase
             var("*phase")
         ]))).unwrap();
 
@@ -396,4 +399,18 @@ fn check_phasor_example() {
     assert_float_eq!(out[9], 0.8058);
 
     dsp_ctx.borrow_mut().free();
+}
+
+#[test]
+fn check_get_nop_function() {
+
+    use wblockdsp::build::*;
+
+    let dsp_ctx = DSPNodeContext::new_ref();
+    let lib = get_default_library();
+
+    let mut fun = get_nop_function(lib.clone(), dsp_ctx.clone());
+    fun.init(44100.0, None);
+    let (_, _, ret) = fun.exec_2in_2out(0.0, 0.0);
+    assert_float_eq!(ret, 0.0);
 }
