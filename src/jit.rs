@@ -512,7 +512,7 @@ pub struct DSPFunction {
     module: Option<JITModule>,
     /// Storage of persistent variables:
     persistent_vars: Vec<f64>,
-    function: fn(
+    function: Option<fn(
         f64,
         f64,
         f64,
@@ -526,7 +526,7 @@ pub struct DSPFunction {
         *mut DSPState,
         *mut *mut u8,
         *mut f64
-    ) -> f64,
+    ) -> f64>,
 }
 
 unsafe impl Send for DSPFunction {}
@@ -540,26 +540,7 @@ impl DSPFunction {
             node_state_init_reset: vec![],
             node_state_uids: vec![],
             persistent_vars: vec![],
-            function: unsafe {
-                mem::transmute::<
-                    _,
-                    fn(
-                        f64,
-                        f64,
-                        f64,
-                        f64,
-                        f64,
-                        f64,
-                        f64,
-                        f64,
-                        *mut f64,
-                        *mut f64,
-                        *mut DSPState,
-                        *mut *mut u8,
-                        *mut f64,
-                    ) -> f64,
-                >(std::ptr::null::<*const u8>())
-            },
+            function: None,
             dsp_ctx_generation,
             module: None,
         }
@@ -569,7 +550,7 @@ impl DSPFunction {
     /// pointer into this function.
     pub fn set_function_ptr(&mut self, function: *const u8, module: JITModule) {
         self.module = Some(module);
-        self.function = unsafe {
+        self.function = Some(unsafe {
             mem::transmute::<
                 _,
                 fn(
@@ -588,7 +569,7 @@ impl DSPFunction {
                     *mut f64,
                 ) -> f64,
             >(function)
-        };
+        });
     }
 
     pub fn init(&mut self, srate: f64, previous_function: Option<&DSPFunction>) {
@@ -676,7 +657,7 @@ impl DSPFunction {
         let (srate, israte) = unsafe { ((*self.state).srate, (*self.state).israte) };
         let states_ptr: *mut *mut u8 = self.node_states.as_mut_ptr();
         let pers_vars_ptr: *mut f64 = self.persistent_vars.as_mut_ptr();
-        let ret = (self.function)(
+        let ret = (unsafe { self.function.unwrap_unchecked() })(
             in1,
             in2,
             alpha,
