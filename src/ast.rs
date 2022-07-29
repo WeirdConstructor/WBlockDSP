@@ -141,7 +141,7 @@ pub enum ASTNode {
     Assign(String, Box<ASTNode>),
     BinOp(ASTBinOp, Box<ASTNode>, Box<ASTNode>),
     If(Box<ASTNode>, Box<ASTNode>, Option<Box<ASTNode>>),
-    Call(String, usize, Vec<Box<ASTNode>>),
+    Call(String, u64, Vec<Box<ASTNode>>),
     Stmts(Vec<Box<ASTNode>>),
 }
 

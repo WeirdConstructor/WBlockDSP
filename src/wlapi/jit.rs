@@ -81,11 +81,11 @@ pub fn vv2ast_node(mut v: VVal) -> Result<Box<ASTNode>, ASTError> {
                             }
                             Ok(())
                         })?;
-                        Ok(Box::new(ASTNode::Call(v.v_s_raw(1), v.v_i(2) as usize, args)))
+                        Ok(Box::new(ASTNode::Call(v.v_s_raw(1), v.v_i(2) as u64, args)))
                     } else {
                         Ok(Box::new(ASTNode::Call(
                             v.v_s_raw(1),
-                            v.v_i(2) as usize,
+                            v.v_i(2) as u64,
                             vec![vv2ast_node(v.v_(3))?],
                         )))
                     }

@@ -80,7 +80,7 @@ impl JIT {
     }
 
     /// Compile a string in the toy language into machine code.
-    pub fn compile(&mut self, prog: ASTFun) -> Result<*const u8, JITCompileError> {
+    pub fn compile(mut self, prog: ASTFun) -> Result<Box<DSPFunction>, JITCompileError> {
         let module = self.module.as_mut().expect("Module still loaded");
         let ptr_type = module.target_config().pointer_type();
 
@@ -103,7 +103,7 @@ impl JIT {
         // Then, translate the AST nodes into Cranelift IR.
         self.translate(prog)?;
 
-        let module = self.module.as_mut().expect("Module still loaded");
+        let mut module = self.module.take().expect("Module still loaded");
         module
             .define_function(id, &mut self.ctx)
             .map_err(|e| JITCompileError::DefineTopFunError(e.to_string()))?;
@@ -113,10 +113,15 @@ impl JIT {
 
         let code = module.get_finalized_function(id);
 
-        Ok(code)
+        let dsp_fun = self
+            .dsp_ctx
+            .borrow_mut()
+            .finalize_dsp_function(code, module)
+            .expect("DSPFunction present in DSPNodeContext.");
+
+        Ok(dsp_fun)
     }
 
-    // Translate from toy-language AST nodes into Cranelift IR.
     fn translate(&mut self, fun: ASTFun) -> Result<(), JITCompileError> {
         let builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
 
@@ -128,21 +133,11 @@ impl JIT {
         let mut trans = DSPFunctionTranslator::new(&mut *dsp_ctx, &*dsp_lib, builder, module);
         trans.register_functions();
         let ret = trans.translate(fun)?;
-        //d// println!("{}", trans.builder.func.display());
+        println!("{}", trans.builder.func.display());
         Ok(ret)
     }
 
     //    pub fn translate_ast_node(&mut self, builder: FunctionBuilder<'a>,
-}
-
-impl Drop for JIT {
-    fn drop(&mut self) {
-        unsafe {
-            if let Some(module) = self.module.take() {
-                module.free_memory();
-            }
-        };
-    }
 }
 
 struct DSPFunctionTranslator<'a, 'b, 'c> {
@@ -152,7 +147,7 @@ struct DSPFunctionTranslator<'a, 'b, 'c> {
     variables: HashMap<String, Variable>,
     var_index: usize,
     module: &'a mut JITModule,
-    functions: HashMap<String, (Rc<dyn DSPNodeType>, FuncId)>,
+    dsp_node_functions: HashMap<String, (Rc<dyn DSPNodeType>, FuncId)>,
     ptr_w: u32,
 }
 
@@ -202,25 +197,13 @@ pub trait DSPNodeType {
 
     /// Deallocates the private state of this [DSPNodeType].
     fn deallocate_state(&self, _ptr: *mut u8) {}
-
-    /// Returns true if this DSPNodeType has some private state that should be passed as
-    /// argument (allocated using [DSPNodeType::allocate_state].
-    fn is_stateful(&self) -> bool {
-        let mut i = 0;
-        while let Some(sig) = self.signature(i) {
-            if sig == DSPNodeSigBit::NodeStatePtr {
-                return true;
-            }
-            i += 1;
-        }
-
-        false
-    }
 }
 
 /// A handle to manage the state of a DSP node
 /// that was created while the [DSPFunctionTranslator] compiled the given AST
-/// to machine code.
+/// to machine code. The AST needs to take care to refer to the same piece
+/// of state with the same type across different compilations of the AST with the
+/// same [DSPNodeContext].
 ///
 /// It holds a pointer to the state of a single DSP node. The internal state
 /// pointer will be shared with the execution thread that will execute the
@@ -228,6 +211,9 @@ pub trait DSPNodeType {
 ///
 /// You will not have to allocate and manage this manually, see also [DSPFunction].
 pub struct DSPNodeState {
+    /// The node_state_uid that identifies this piece of state uniquely across multiple
+    /// ASTs.
+    uid: u64,
     /// Holds the type of this piece of state.
     node_type: Rc<dyn DSPNodeType>,
     /// A pointer to the allocated piece of state. It will be shared
@@ -247,14 +233,20 @@ pub struct DSPNodeState {
 
 impl DSPNodeState {
     /// Creates a fresh piece of DSP node state.
-    pub fn new(node_type: Rc<dyn DSPNodeType>) -> Self {
+    pub fn new(uid: u64, node_type: Rc<dyn DSPNodeType>) -> Self {
         Self {
+            uid,
             node_type: node_type.clone(),
             ptr: node_type.allocate_state().expect("DSPNodeState created for stateful node type"),
             generation: 0,
             function_index: 0,
             initialized: false,
         }
+    }
+
+    /// Returns the unique ID of this piece of DSP node state.
+    pub fn uid(&self) -> u64 {
+        self.uid
     }
 
     /// Marks this piece of DSP state as used and deposits the
@@ -278,6 +270,17 @@ impl DSPNodeState {
     /// for this is not worth it (regarding development time) at the moment I think.
     pub fn set_initialized(&mut self) {
         self.initialized = true;
+    }
+
+    /// Returns the state pointer for this DSPNodeState instance.
+    /// Primarily used by [DSPFunction::install].
+    pub fn ptr(&self) -> *mut u8 {
+        self.ptr
+    }
+
+    /// Returns the [DSPNodeType] for this [DSPNodeState].
+    pub fn node_type(&self) -> Rc<dyn DSPNodeType> {
+        self.node_type.clone()
     }
 }
 
@@ -337,8 +340,8 @@ pub struct DSPNodeContext {
     /// The global DSP state that is passed to all stateful DSP nodes.
     state: *mut DSPState,
     /// A map of unique DSP node instances (identified by dsp_node_uid) that need private state.
-    func_states: HashMap<u64, Box<DSPNodeState>>,
-    /// A generation counter to determine whether some [DSPNodeState] instances in `func_states`
+    node_states: HashMap<u64, Box<DSPNodeState>>,
+    /// A generation counter to determine whether some [DSPNodeState] instances in `node_states`
     /// can be cleaned up.
     generation: u64,
     /// Contains the currently compiled [DSPFunction].
@@ -349,7 +352,7 @@ impl DSPNodeContext {
     fn new() -> Self {
         Self {
             state: Box::into_raw(Box::new(DSPState { x: 0.0, y: 0.0, srate: 44100.0 })),
-            func_states: HashMap::new(),
+            node_states: HashMap::new(),
             generation: 0,
             next_dsp_fun: None,
         }
@@ -362,30 +365,88 @@ impl DSPNodeContext {
     pub fn init_dsp_function(&mut self) {
         // TODO: tracking the uninitialized states in DSPNodeContext
         //      and commit() them if the function was successfully compiled! Might be
-        //      easier to manage. That could be just a flag in func_states!
-        self.next_dsp_fun = Some(Box::new(DSPFunction::new(self.state)));
+        //      easier to manage. That could be just a flag in node_states!
+        self.generation += 1;
+        self.next_dsp_fun = Some(Box::new(DSPFunction::new(self.state, self.generation)));
     }
 
-    pub fn add_dsp_node_instance(&mut self, node_type: Rc<dyn DSPNodeType>, dsp_node_uid: usize) -> bool {
-        // TODO: Return false if the dsp_node_uis is duplicated.
-        // TODO: create a new DSPNodeState here and register it.
-        // TODO: Remember to manage the func_state_init_reset in DSPFunction
-        false
-    }
-
-    pub fn finalize_dsp_function(&mut self) -> Option<Box<DSPFunction>> {
+    /// Adds a [DSPNodeState] to the currently compiled [DSPFunction] and returns
+    /// the index into the node state vector in the [DSPFunction], so that the JIT
+    /// code can index into that vector to find the right state pointer.
+    pub fn add_dsp_node_instance(
+        &mut self,
+        node_type: Rc<dyn DSPNodeType>,
+        dsp_node_uid: u64,
+    ) -> Result<usize, String> {
         if let Some(next_dsp_fun) = &mut self.next_dsp_fun {
-            // TODO: Iterate through the next_dsp_fun and mark all the new [DSPNodeState]
-            //       in self.func_states as initialized.
+            if next_dsp_fun.has_dsp_node_state_uid(dsp_node_uid) {
+                return Err(format!(
+                    "node_state_uid has been used multiple times in same AST: {}",
+                    dsp_node_uid
+                ));
+            }
+
+            if !self.node_states.contains_key(&dsp_node_uid) {
+                self.node_states.insert(
+                    dsp_node_uid,
+                    Box::new(DSPNodeState::new(dsp_node_uid, node_type.clone())),
+                );
+            }
+
+            if let Some(state) = self.node_states.get_mut(&dsp_node_uid) {
+                if state.node_type().name() != node_type.name() {
+                    return Err(format!(
+                        "Different DSPNodeType for uid {}: {} != {}",
+                        dsp_node_uid,
+                        state.node_type().name(),
+                        node_type.name()
+                    ));
+                }
+
+                Ok(next_dsp_fun.install(state))
+            } else {
+                Err(format!("NodeState does not exist, but it should... bad! {}", dsp_node_uid))
+            }
+        } else {
+            Err("No DSPFunction in DSPNodeContext".to_string())
         }
-        self.next_dsp_fun.take()
+    }
+
+    pub fn finalize_dsp_function(
+        &mut self,
+        function_ptr: *const u8,
+        module: JITModule,
+    ) -> Option<Box<DSPFunction>> {
+        if let Some(mut next_dsp_fun) = self.next_dsp_fun.take() {
+            next_dsp_fun.set_function_ptr(function_ptr, module);
+
+            for (_, node_state) in self.node_states.iter_mut() {
+                node_state.set_initialized();
+            }
+
+            // TODO: Garbage collect and free unused node state!
+            //       But this must happen by the backend/frontend thread separation.
+            //       Best would be to provide DSPNodeContext::cleaup_dsp_function_after_use(DSPFunction).
+
+            Some(next_dsp_fun)
+        } else {
+            None
+        }
+    }
+
+    pub fn free(&mut self) {
+        if !self.state.is_null() {
+            unsafe { Box::from_raw(self.state) };
+            self.state = std::ptr::null_mut();
+        }
     }
 }
 
 impl Drop for DSPNodeContext {
     fn drop(&mut self) {
-        unsafe { Box::from_raw(self.state) };
-        self.state = std::ptr::null_mut();
+        if !self.state.is_null() {
+            eprintln!("WBlockDSP JIT DSPNodeContext not cleaned up on exit. Forgot to call free() or keep it alive long enough?");
+        }
     }
 }
 
@@ -401,9 +462,23 @@ impl Drop for DSPNodeContext {
 /// Of course also only on the DSP executing thread.
 pub struct DSPFunction {
     state: *mut DSPState,
-    func_state_types: Vec<Rc<dyn DSPNodeType>>,
-    func_states: Vec<*mut u8>,
-    func_state_init_reset: Vec<usize>,
+    /// Contains the types of the corresponding `node_states`. The [DSPNodeType] is
+    /// necessary to reset the state pointed to by the pointers in `node_states`.
+    node_state_types: Vec<Rc<dyn DSPNodeType>>,
+    /// Contains the actual pointers to the state that was constructed by the corresponding [DSPNodeState].
+    node_states: Vec<*mut u8>,
+    /// Constains indices into `node_states`, so that they can be reset/initialized by [DSPFunction::init].
+    /// Only contains recently added (as determined by [DSPNodeContext]) and uninitialized state indices.
+    node_state_init_reset: Vec<usize>,
+    /// Keeps the node_state_uid of the [DSPNodeState] pieces used already in this
+    /// function. It's for error detection when building this [DSPFunction], to prevent
+    /// the user from evaluating a stateful DSP node multiple times.
+    node_state_uids: Vec<u64>,
+    /// Generation of the corresponding [DSPNodeContext].
+    dsp_ctx_generation: u64,
+    /// The JITModule that is the home for the `function` pointer. It must be kept alive
+    /// as long as the `function` pointer is in use.
+    module: Option<JITModule>,
     function: fn(
         f64,
         f64,
@@ -421,12 +496,13 @@ pub struct DSPFunction {
 }
 
 impl DSPFunction {
-    pub fn new(state: *mut DSPState) -> Self {
+    pub fn new(state: *mut DSPState, dsp_ctx_generation: u64) -> Self {
         Self {
             state,
-            func_state_types: vec![],
-            func_states: vec![],
-            func_state_init_reset: vec![],
+            node_state_types: vec![],
+            node_states: vec![],
+            node_state_init_reset: vec![],
+            node_state_uids: vec![],
             function: unsafe {
                 mem::transmute::<
                     _,
@@ -446,10 +522,15 @@ impl DSPFunction {
                     ) -> f64,
                 >(std::ptr::null::<*const u8>())
             },
+            dsp_ctx_generation,
+            module: None,
         }
     }
 
-    pub fn set_function_ptr(&mut self, function: *const u8) {
+    /// At the end of the compilation the [JIT] will put the resulting function
+    /// pointer into this function.
+    pub fn set_function_ptr(&mut self, function: *const u8, module: JITModule) {
+        self.module = Some(module);
         self.function = unsafe {
             mem::transmute::<
                 _,
@@ -476,9 +557,9 @@ impl DSPFunction {
             (*self.state).srate = srate;
         }
 
-        for idx in self.func_state_init_reset.iter() {
-            let typ = &self.func_state_types[*idx];
-            let ptr = self.func_states[*idx];
+        for idx in self.node_state_init_reset.iter() {
+            let typ = &self.node_state_types[*idx as usize];
+            let ptr = self.node_states[*idx as usize];
             typ.reset_state(self.state, ptr);
         }
     }
@@ -491,9 +572,39 @@ impl DSPFunction {
     }
 
     pub fn reset(&mut self) {
-        for (typ, ptr) in self.func_state_types.iter().zip(self.func_states.iter_mut()) {
+        for (typ, ptr) in self.node_state_types.iter().zip(self.node_states.iter_mut()) {
             typ.reset_state(self.state, *ptr);
         }
+    }
+
+    pub fn get_dsp_state_ptr(&self) -> *mut DSPState {
+        self.state
+    }
+
+    pub unsafe fn with_dsp_state<R, F: FnMut(*mut DSPState) -> R>(&mut self, mut f: F) -> R {
+        f(self.get_dsp_state_ptr())
+    }
+
+    pub unsafe fn with_node_state<T, R, F: FnMut(*mut T) -> R>(
+        &mut self,
+        node_state_uid: u64,
+        mut f: F,
+    ) -> Result<R, ()> {
+        if let Some(state_ptr) = self.get_node_state_ptr(node_state_uid) {
+            Ok(f(state_ptr as *mut T))
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn get_node_state_ptr(&self, node_state_uid: u64) -> Option<*mut u8> {
+        for (i, uid) in self.node_state_uids.iter().enumerate() {
+            if *uid == node_state_uid {
+                return Some(self.node_states[i]);
+            }
+        }
+
+        None
     }
 
     pub fn exec(
@@ -511,10 +622,48 @@ impl DSPFunction {
             // TODO: Store israte to save a division!
             ((*self.state).srate, (*self.state).srate)
         };
-        let states_ptr: *mut *mut u8 = self.func_states.as_mut_ptr();
-        (self.function)(
+        let states_ptr: *mut *mut u8 = self.node_states.as_mut_ptr();
+        let ret = (self.function)(
             in1, in2, alpha, beta, delta, gamma, srate, israte, sig1, sig2, self.state, states_ptr,
-        )
+        );
+        ret
+    }
+
+    pub fn install(&mut self, node_state: &mut DSPNodeState) -> usize {
+        let idx = self.node_states.len();
+        node_state.mark(self.dsp_ctx_generation, idx);
+
+        self.node_states.push(node_state.ptr());
+        self.node_state_types.push(node_state.node_type());
+        self.node_state_uids.push(node_state.uid());
+
+        if !node_state.is_initialized() {
+            self.node_state_init_reset.push(idx);
+        }
+
+        idx
+    }
+
+    pub fn has_dsp_node_state_uid(&self, uid: u64) -> bool {
+        for i in self.node_state_uids.iter() {
+            if *i == uid {
+                return true;
+            }
+        }
+
+        false
+    }
+}
+
+impl Drop for DSPFunction {
+    fn drop(&mut self) {
+        // TODO: Take out the module on DSPNodeContext.finalize_dsp_function and deposit
+        //       it there, give DSPFunction the responsibility to destruct/free memory!
+        unsafe {
+            if let Some(module) = self.module.take() {
+                module.free_memory();
+            }
+        };
     }
 }
 
@@ -526,8 +675,8 @@ pub enum JITCompileError {
     DeclareTopFunError(String),
     DefineTopFunError(String),
     UndefinedDSPNode(String),
-    NotEnoughArgsInCall(String, usize),
-    DuplicatedDSPNodeStateUID(String, usize),
+    NotEnoughArgsInCall(String, u64),
+    NodeStateError(String, u64),
 }
 
 impl<'a, 'b, 'c> DSPFunctionTranslator<'a, 'b, 'c> {
@@ -546,7 +695,7 @@ impl<'a, 'b, 'c> DSPFunctionTranslator<'a, 'b, 'c> {
             variables: HashMap::new(),
             builder,
             module,
-            functions: HashMap::new(),
+            dsp_node_functions: HashMap::new(),
             ptr_w: 8,
         }
     }
@@ -558,7 +707,7 @@ impl<'a, 'b, 'c> DSPFunctionTranslator<'a, 'b, 'c> {
         // (see also https://zmedley.com/calling-rust.html)
         let ptr_type = self.module.target_config().pointer_type();
 
-        let mut functions = HashMap::new();
+        let mut dsp_node_functions = HashMap::new();
         self.dsp_lib.for_each(|typ| {
             let mut sig = self.module.make_signature();
             let mut i = 0;
@@ -583,12 +732,12 @@ impl<'a, 'b, 'c> DSPFunctionTranslator<'a, 'b, 'c> {
                 .declare_function(typ.name(), cranelift_module::Linkage::Import, &sig)
                 .map_err(|e| JITCompileError::DeclareTopFunError(e.to_string()))?;
 
-            functions.insert(typ.name().to_string(), (typ.clone(), func_id));
+            dsp_node_functions.insert(typ.name().to_string(), (typ.clone(), func_id));
 
             Ok(())
         })?;
 
-        self.functions = functions;
+        self.dsp_node_functions = dsp_node_functions;
 
         Ok(())
 
@@ -756,7 +905,7 @@ impl<'a, 'b, 'c> DSPFunctionTranslator<'a, 'b, 'c> {
             }
             ASTNode::Call(name, dsp_node_uid, args) => {
                 let func = self
-                    .functions
+                    .dsp_node_functions
                     .get(name)
                     .ok_or_else(|| JITCompileError::UndefinedDSPNode(name.to_string()))?
                     .clone();
@@ -787,6 +936,13 @@ impl<'a, 'b, 'c> DSPFunctionTranslator<'a, 'b, 'c> {
                             dsp_node_fun_params.push(self.builder.use_var(*state_var));
                         }
                         DSPNodeSigBit::NodeStatePtr => {
+                            let node_state_index = match
+                                self.dsp_ctx.add_dsp_node_instance(node_type.clone(), *dsp_node_uid)
+                            {
+                                Err(e) => { return Err(JITCompileError::NodeStateError(e, *dsp_node_uid)); }
+                                Ok(idx) => idx,
+                            };
+
                             let fstate_var = self.variables.get("&fstate").ok_or_else(|| {
                                 JITCompileError::UndefinedVariable("&fstate".to_string())
                             })?;
@@ -795,22 +951,13 @@ impl<'a, 'b, 'c> DSPFunctionTranslator<'a, 'b, 'c> {
                                 ptr_type,
                                 MemFlags::new(),
                                 fptr,
-                                Offset32::new(*dsp_node_uid as i32 * self.ptr_w as i32),
+                                Offset32::new(node_state_index as i32 * self.ptr_w as i32),
                             );
                             dsp_node_fun_params.push(func_state);
                         }
                     }
 
                     i += 1;
-                }
-
-                if node_type.is_stateful() {
-                    if !self.dsp_ctx.add_dsp_node_instance(node_type.clone(), *dsp_node_uid) {
-                        return Err(JITCompileError::DuplicatedDSPNodeStateUID(
-                            node_type.name().to_string(),
-                            *dsp_node_uid,
-                        ));
-                    }
                 }
 
                 // TODO: Then use the DSPNodeContext to allocate and prepare the
@@ -1144,7 +1291,8 @@ impl TSTState {
     }
 }
 
-pub fn test(x: f64, state: *mut DSPState, mystate: *mut std::ffi::c_void) -> f64 {
+pub fn test(x: f64, state: *mut DSPState, mystate: *mut u8) -> f64 {
+    println!("TEST CALL1");
     unsafe {
         let p = mystate as *mut TSTState;
         (*state).x = x * 22.0;
