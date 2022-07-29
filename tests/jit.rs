@@ -223,3 +223,25 @@ fn check_jit_sin_wlambda() {
 
     assert_float_eq!(sum1, sum2);
 }
+
+fn exec_ast(ast: Box<ASTNode>, in1: f64, in2: f64) -> (f64, f64, f64) {
+    let dsp_ctx = DSPNodeContext::new_ref();
+    let jit = JIT::new(get_default_library(), dsp_ctx.clone());
+
+    let mut code = jit.compile(ASTFun::new(ast)).unwrap();
+
+    code.init(44100.0);
+    let ret = code.exec_2in_2out(in1, in2);
+
+    dsp_ctx.borrow_mut().free();
+    ret
+}
+
+#[test]
+fn check_jit_sample_rate_vars() {
+    use wblockdsp::build::*;
+    let (_, _, ret) = exec_ast(var("srate"), 0.0, 0.0);
+    assert_float_eq!(ret, 44100.0);
+    let (_, _, ret) = exec_ast(var("israte"), 0.0, 0.0);
+    assert_float_eq!(ret, 1.0 / 44100.0);
+}

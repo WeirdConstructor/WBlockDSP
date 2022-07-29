@@ -155,6 +155,7 @@ pub struct DSPState {
     pub x: f64,
     pub y: f64,
     pub srate: f64,
+    pub israte: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -351,7 +352,12 @@ pub struct DSPNodeContext {
 impl DSPNodeContext {
     fn new() -> Self {
         Self {
-            state: Box::into_raw(Box::new(DSPState { x: 0.0, y: 0.0, srate: 44100.0 })),
+            state: Box::into_raw(Box::new(DSPState {
+                x: 0.0,
+                y: 0.0,
+                srate: 44100.0,
+                israte: 1.0 / 44100.0,
+            })),
             node_states: HashMap::new(),
             generation: 0,
             next_dsp_fun: None,
@@ -557,6 +563,7 @@ impl DSPFunction {
     pub fn init(&mut self, srate: f64) {
         unsafe {
             (*self.state).srate = srate;
+            (*self.state).israte = 1.0 / srate;
         }
 
         for idx in self.node_state_init_reset.iter() {
@@ -569,7 +576,9 @@ impl DSPFunction {
     pub fn set_sample_rate(&mut self, srate: f64) {
         unsafe {
             (*self.state).srate = srate;
+            (*self.state).israte = 1.0 / srate;
         }
+
         self.reset();
     }
 
@@ -627,10 +636,7 @@ impl DSPFunction {
         sig1: &mut f64,
         sig2: &mut f64,
     ) -> f64 {
-        let (srate, israte) = unsafe {
-            // TODO: Store israte to save a division!
-            ((*self.state).srate, (*self.state).srate)
-        };
+        let (srate, israte) = unsafe { ((*self.state).srate, (*self.state).israte) };
         let states_ptr: *mut *mut u8 = self.node_states.as_mut_ptr();
         let ret = (self.function)(
             in1, in2, alpha, beta, delta, gamma, srate, israte, sig1, sig2, self.state, states_ptr,
@@ -945,10 +951,13 @@ impl<'a, 'b, 'c> DSPFunctionTranslator<'a, 'b, 'c> {
                             dsp_node_fun_params.push(self.builder.use_var(*state_var));
                         }
                         DSPNodeSigBit::NodeStatePtr => {
-                            let node_state_index = match
-                                self.dsp_ctx.add_dsp_node_instance(node_type.clone(), *dsp_node_uid)
+                            let node_state_index = match self
+                                .dsp_ctx
+                                .add_dsp_node_instance(node_type.clone(), *dsp_node_uid)
                             {
-                                Err(e) => { return Err(JITCompileError::NodeStateError(e, *dsp_node_uid)); }
+                                Err(e) => {
+                                    return Err(JITCompileError::NodeStateError(e, *dsp_node_uid));
+                                }
                                 Ok(idx) => idx,
                             };
 
@@ -1364,7 +1373,9 @@ impl DSPNodeType for TestNodeType {
 #[derive(Default)]
 struct SinNodeType;
 
-pub extern "C" fn jit_sin(v: f64) -> f64 { v.sin() }
+pub extern "C" fn jit_sin(v: f64) -> f64 {
+    v.sin()
+}
 
 impl DSPNodeType for SinNodeType {
     fn name(&self) -> &str {
