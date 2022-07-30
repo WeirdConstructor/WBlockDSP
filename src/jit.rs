@@ -455,14 +455,16 @@ impl DSPNodeContext {
                 node_state.set_initialized();
             }
 
-            // TODO: Garbage collect and free unused node state!
-            //       But this must happen by the backend/frontend thread separation.
-            //       Best would be to provide DSPNodeContext::cleaup_dsp_function_after_use(DSPFunction).
-
             Some(next_dsp_fun)
         } else {
             None
         }
+    }
+
+    pub fn cleanup_dsp_fun_after_user(&mut self, _fun: Box<DSPFunction>) {
+        // TODO: Garbage collect and free unused node state!
+        //       But this must happen by the backend/frontend thread separation.
+        //       Best would be to provide DSPNodeContext::cleaup_dsp_function_after_use(DSPFunction).
     }
 
     pub fn free(&mut self) {
@@ -1326,4 +1328,12 @@ pub fn get_default_library() -> Rc<RefCell<DSPNodeTypeLibrary>> {
     lib.borrow_mut().add(Rc::new(TestNodeType::default()));
     lib.borrow_mut().add(Rc::new(SinNodeType::default()));
     lib
+}
+
+pub fn get_nop_function(
+    lib: Rc<RefCell<DSPNodeTypeLibrary>>,
+    dsp_ctx: Rc<RefCell<DSPNodeContext>>,
+) -> Box<DSPFunction> {
+    let jit = JIT::new(lib, dsp_ctx);
+    jit.compile(ASTFun::new(Box::new(ASTNode::Lit(0.0)))).expect("No compile error")
 }
